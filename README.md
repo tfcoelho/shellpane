@@ -1,4 +1,15 @@
-# Shellpane
+<p align="center">
+  <img src="Resources/AppIcon-1024.png" alt="Shellpane logo" width="128">
+</p>
+
+<h1 align="center">Shellpane</h1>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License MIT" src="https://img.shields.io/badge/License-MIT-c9a227?style=flat-square"></a>
+  <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-informational?style=flat-square&logo=apple&logoColor=white">
+  <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6.0-F05138?style=flat-square&logo=swift&logoColor=white">
+  <img alt="Apple silicon and Intel" src="https://img.shields.io/badge/Apple%20silicon%20%2B%20Intel-supported-2ea44f?style=flat-square">
+</p>
 
 **The Mac file manager for people who live in SSH.** Two panes, your Mac on one side and your servers on the
 other. If `ssh yourserver` works in Terminal, it works in Shellpane: it runs your Mac's own `/usr/bin/ssh`,
