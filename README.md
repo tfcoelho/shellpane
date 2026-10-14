@@ -1,10 +1,9 @@
-<p align="center">
-  <img src="Resources/AppIcon-1024.png" alt="Shellpane logo" width="128">
-</p>
+<h1>
+  <img src="Resources/AppIcon-1024.png" alt="Shellpane logo" height="56" align="absmiddle">
+  Shellpane
+</h1>
 
-<h1 align="center">Shellpane</h1>
-
-<p align="center">
+<p>
   <a href="LICENSE"><img alt="License MIT" src="https://img.shields.io/badge/License-MIT-c9a227?style=flat-square"></a>
   <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-informational?style=flat-square&logo=apple&logoColor=white">
   <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6.0-F05138?style=flat-square&logo=swift&logoColor=white">
