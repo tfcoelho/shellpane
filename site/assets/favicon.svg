@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs>
+  <linearGradient id="body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2e2e33"/><stop offset="1" stop-color="#17171a"/></linearGradient>
+  <linearGradient id="mac" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6f6f9"/><stop offset="1" stop-color="#d9d9e0"/></linearGradient>
+  <linearGradient id="server" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#16b192"/><stop offset="1" stop-color="#0b8470"/></linearGradient>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-opacity=".30"/></filter>
+</defs><rect x="0" y="0" width="1024" height="1024" rx="230.4" fill="url(#body)"/><rect x="1.5" y="1.5" width="1021" height="1021" rx="228.9" fill="none" stroke="#fff" stroke-opacity=".12" stroke-width="3"/><rect x="107" y="172" width="270" height="680" rx="44" fill="url(#mac)"/><rect x="647" y="172" width="270" height="680" rx="44" fill="url(#server)"/><path d="M440.08 382 L564.08 512 L440.08 642" fill="none" stroke="#f2f2f5" stroke-width="100" stroke-linecap="round" stroke-linejoin="round"/></svg>

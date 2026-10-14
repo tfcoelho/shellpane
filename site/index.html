@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shellpane</title>
+<meta name="description" content="The Mac file manager for people who live in SSH. If ssh works in Terminal, it works in Shellpane, and you never need the mouse.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<!-- Colours are design/tokens/tokens.json (Shellpane teal), checked for WCAG AA contrast. -->
+<style>
+:root {
+  --bg: #ffffff;
+  --surface: #f2f2f4;
+  --border: #dcdce0;
+  --text: #1d1d1f;
+  --text-muted: #66666b;
+  --accent: #0a7564;
+  --on-accent: #ffffff;
+  --accent-text: #086a5a;
+  --focus-ring: #0a7564;
+  --code-bg: #e6e6ea;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1e20;
+    --surface: #2a2a2d;
+    --border: #3e3e43;
+    --text: #ececf0;
+    --text-muted: #a2a2a9;
+    --accent: #0d8370; /* lighter than the app's #0a7564 so buttons reach 3:1 on the dark page */
+    --on-accent: #ffffff;
+    --accent-text: #4fd1b4;
+    --focus-ring: #4fd1b4;
+    --code-bg: #323236;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+}
+a { color: var(--accent-text); }
+a:focus-visible, .button:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+code, kbd {
+  font: 0.88em ui-monospace, "SF Mono", Menlo, monospace;
+  background: var(--code-bg);
+  border-radius: 4px;
+  padding: 0.08em 0.35em;
+}
+kbd { border: 1px solid var(--border); }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+.narrow { max-width: 720px; }
+
+header.top { border-bottom: 1px solid var(--border); }
+header.top .wrap { display: flex; align-items: center; justify-content: space-between; height: 56px; }
+.wordmark { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 18px; color: var(--text); text-decoration: none; }
+.mark { width: 26px; height: 26px; }
+nav a { color: var(--text-muted); text-decoration: none; margin-left: 20px; font-size: 15px; }
+nav a:hover { color: var(--text); }
+
+.hero { padding-top: 72px; padding-bottom: 40px; text-align: center; }
+.hero h1 { font-size: clamp(32px, 5vw, 52px); line-height: 1.1; letter-spacing: -0.02em; margin: 0 auto 20px; max-width: 16em; }
+.hero p.lede { font-size: clamp(18px, 2.2vw, 21px); color: var(--text-muted); max-width: 36em; margin: 0 auto 32px; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; align-items: center; }
+.button {
+  display: inline-block; padding: 12px 22px; border-radius: 10px;
+  background: var(--accent); color: var(--on-accent);
+  font-weight: 600; text-decoration: none;
+}
+.button.secondary { background: transparent; color: var(--accent-text); border: 1px solid var(--border); }
+.fine { font-size: 14px; color: var(--text-muted); margin-top: 14px; }
+
+.film { background: #0c0d0f; margin-top: 40px; }
+.film video { display: block; width: 100%; max-width: 1600px; height: auto; margin: 0 auto; }
+.final .actions { margin-top: 4px; }
+.shot { margin: 48px auto 0; max-width: 1180px; padding: 0 16px; }
+.shot img {
+  display: block; width: 100%; height: auto;
+  border-radius: 12px; border: 1px solid var(--border);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18);
+}
+.shot figcaption { text-align: center; color: var(--text-muted); font-size: 14px; margin-top: 14px; }
+
+section { padding: 72px 0; }
+section.alt { background: var(--surface); }
+h2 { font-size: clamp(26px, 3.4vw, 34px); letter-spacing: -0.01em; line-height: 1.2; margin: 0 0 28px; }
+h3 { font-size: 19px; margin: 0 0 6px; }
+
+.problems { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 32px; }
+.problems p { margin: 0; color: var(--text-muted); }
+
+ol.steps { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 32px; counter-reset: step; }
+ol.steps li { counter-increment: step; }
+ol.steps li::before {
+  content: counter(step);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 50%;
+  background: var(--accent); color: var(--on-accent); font-weight: 700; margin-bottom: 12px;
+}
+ol.steps p { margin: 0; color: var(--text-muted); }
+.demo { margin: 48px 0 0; }
+.demo video { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.16); }
+.demo .dark-only { display: none; }
+@media (prefers-color-scheme: dark) { .demo .dark-only { display: block; } .demo .light-only { display: none; } }
+
+.features { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 36px 40px; }
+.features p { margin: 0; color: var(--text-muted); }
+.also { columns: 2 300px; column-gap: 40px; padding-left: 1.1em; margin: 0; color: var(--text-muted); }
+.also li { margin-bottom: 8px; break-inside: avoid; }
+h3.sub { margin: 56px 0 18px; font-size: 21px; }
+
+.pricing { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
+.tier { background: var(--bg); border: 1px solid var(--border); border-radius: 14px; padding: 26px; display: flex; flex-direction: column; }
+.tier.main { border: 2px solid var(--accent); }
+.tier h3 { margin: 0; }
+.tier .who { color: var(--text-muted); margin: 4px 0 18px; }
+.tier .price { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+.tier .once { color: var(--text-muted); font-size: 14px; margin: 0 0 20px; }
+.tier .button { margin-top: auto; text-align: center; }
+.terms { margin-top: 36px; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px 32px; }
+.terms p { margin: 0; color: var(--text-muted); }
+.terms strong { color: var(--text); display: block; }
+
+.faq details { border-bottom: 1px solid var(--border); padding: 18px 0; }
+.faq summary { cursor: pointer; font-weight: 600; font-size: 18px; }
+.faq details p { color: var(--text-muted); margin: 12px 0 0; }
+
+.final { text-align: center; }
+.final h2 { margin-bottom: 12px; }
+.final p { color: var(--text-muted); margin: 0 0 28px; }
+
+footer { border-top: 1px solid var(--border); padding: 28px 0 40px; color: var(--text-muted); font-size: 14px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; }
+footer a { color: var(--text-muted); }
+
+@media (max-width: 600px) {
+  nav a:not(:last-child) { display: none; }
+  .hero { padding-top: 48px; }
+  section { padding: 56px 0; }
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="wordmark" href="#">
+      <img class="mark" src="assets/favicon.svg" alt="">
+      Shellpane
+    </a>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#free">Open source</a>
+      <a href="#faq">FAQ</a>
+      <a href="#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="hero wrap">
+    <h1>The Mac file manager for people who live in SSH.</h1>
+    <p class="lede">If <code>ssh yourserver</code> works in Terminal, it works in Shellpane. Your config, keys, agent and jump hosts, with nothing to set up. And you never need the mouse.</p>
+    <div class="actions">
+      <!-- The newest release's disk image, from GitHub Releases. -->
+      <a class="button" href="https://github.com/tfcoelho/shellpane/releases/latest/download/Shellpane.dmg">Download for Mac</a>
+      <a class="button secondary" href="https://github.com/tfcoelho/shellpane">View on GitHub</a>
+    </div>
+    <p class="fine">Free and open source · macOS 14 or later · Apple silicon and Intel</p>
+  </div>
+
+  <!-- The launch video (video/, rendered with Remotion from the real app). Its edges are #0c0d0f, the
+       band's colour, so it sits in the page with no visible border in light or dark. -->
+  <div class="film">
+    <video src="assets/shellpane.mp4" poster="assets/shellpane-poster.jpg" width="1920" height="1080"
+           autoplay muted loop playsinline preload="metadata"
+           aria-label="Shellpane: a sidebar of servers in their own colours and icons, then adding a server called Client shop, picking pink and a cart icon, and it appearing in the sidebar, connected."></video>
+  </div>
+
+  <section>
+    <div class="wrap">
+      <h2>Two things that shouldn't be hard</h2>
+      <div class="problems">
+        <div>
+          <h3>Your SSH setup works in Terminal, then breaks in your file manager.</h3>
+          <p>Keys in your agent, hosts in <code>~/.ssh/config</code>, a jump host in between. Terminal handles all of it. Then the file manager asks for a key file it should already know about, or sits on “connecting…”.</p>
+        </div>
+        <div>
+          <h3>Keyboard-first file managers stopped being keyboard-first.</h3>
+          <p>Marking files with the Space bar and working with the F-keys of the classic commanders is how many people move files. On the Mac it has been disappearing.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="alt">
+    <div class="wrap">
+      <h2>How it works</h2>
+      <ol class="steps">
+        <li>
+          <h3>Open Shellpane.</h3>
+          <p>The hosts in your <code>~/.ssh/config</code> are already in the sidebar.</p>
+        </li>
+        <li>
+          <h3>Click one.</h3>
+          <p>Shellpane runs your Mac's own <code>ssh</code>, the same program Terminal uses, so it logs in the same way.</p>
+        </li>
+        <li>
+          <h3>Work from the keyboard.</h3>
+          <p><kbd>Space</kbd> marks files, <kbd>F5</kbd> copies them to the other pane, <kbd>F6</kbd> moves them, <kbd>F4</kbd> edits one on the server.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <h2>What makes it different</h2>
+      <div class="features">
+        <div>
+          <h3>It's your ssh.</h3>
+          <p>Shellpane drives <code>/usr/bin/ssh</code>: your <code>~/.ssh/config</code> with its aliases, <code>IdentityFile</code>, <code>ProxyJump</code>, <code>Include</code> and <code>Match</code>, the agent your Terminal uses, <code>known_hosts</code> and passphrase-protected keys.</p>
+        </div>
+        <div>
+          <h3>Your shell's agent, even from the Dock.</h3>
+          <p>If your shell profile points <code>SSH_AUTH_SOCK</code> at an agent, Shellpane reads it, so opening the app from Finder doesn't lose it.</p>
+        </div>
+        <div>
+          <h3>Commander keys.</h3>
+          <p><kbd>Space</kbd> or <kbd>Insert</kbd> marks, arrows keep your marks, <kbd>F3</kbd> Quick Look, <kbd>F4</kbd> edit, <kbd>F5</kbd> copy, <kbd>F6</kbd> move, <kbd>F7</kbd> new folder, <kbd>F8</kbd> delete, <kbd>/</kbd> filters. Prefer Space for Quick Look? One switch in Settings.</p>
+        </div>
+        <div>
+          <h3>Errors you can act on.</h3>
+          <p>“web-1 refused the connection. Check the port, and that SSH is running on the server.” Then ssh's own words underneath, and a button that copies the same login as an <code>ssh -v</code> command for Terminal.</p>
+        </div>
+        <div>
+          <h3>A changed server identity stops everything.</h3>
+          <p>First contact shows the fingerprint. If a server's key ever changes, Shellpane refuses to connect. There is no “connect anyway” button.</p>
+        </div>
+      </div>
+
+      <h3 class="sub">And everything you'd expect</h3>
+      <ul class="also">
+        <li>Two panes, tabs, list, icon and column views, back and forward</li>
+        <li>Copy and move between Mac and server, or server and server, by keys, drag and drop or <kbd>⌘C</kbd> <kbd>⌘V</kbd></li>
+        <li>A transfer queue you can pause, reorder and retry</li>
+        <li>Folder sync with a preview of every add, update and delete before anything happens</li>
+        <li>Edit a server file in your own editor. Each save uploads, and Shellpane won't overwrite a copy someone else changed meanwhile</li>
+        <li>Open in Terminal, iTerm, Ghostty or Warp at the folder you're in</li>
+        <li>Saved servers in groups, passwords and passphrases in your Keychain</li>
+        <li>File info and permissions, an operation log, bandwidth limits</li>
+        <li>Export and import your server list</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Proof: intentionally empty. Add real quotes from beta users here, with their permission. Never reviews of other apps. -->
+
+  <section class="alt" id="free">
+    <div class="wrap narrow">
+      <h2>Free, and open source.</h2>
+      <div class="terms">
+        <p><strong>Free to use, for everyone.</strong> No trial, no account, no licence key, nothing that expires.</p>
+        <p><strong>Open source (MIT).</strong> An app that runs your ssh should be one you can read. The code is <a href="https://github.com/tfcoelho/shellpane">on GitHub</a>.</p>
+        <p><strong>Built in the open.</strong> Report a bug or ask for a feature in <a href="https://github.com/tfcoelho/shellpane/issues">Issues</a>.</p>
+        <!-- When the accounts exist: a GitHub Sponsors and a Buy Me a Coffee link here, and in .github/FUNDING.yml. -->
+        <p><strong>If it saves you time,</strong> a star on GitHub helps other people find it.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="wrap narrow faq">
+      <h2>Questions</h2>
+      <details>
+        <summary>Why isn't it in the Mac App Store?</summary>
+        <p>App Store apps are sandboxed, and a sandboxed app can't run your Mac's <code>ssh</code> or read <code>~/.ssh</code>. Being your ssh is the point of Shellpane, so it's distributed directly, from GitHub.</p>
+      </details>
+      <details>
+        <summary>Does it work with the 1Password or Secretive SSH agent?</summary>
+        <p>Shellpane runs the same <code>ssh</code> as Terminal, with your config and your shell's <code>SSH_AUTH_SOCK</code>. If an agent works with <code>ssh</code> in Terminal, Shellpane uses it the same way.</p>
+      </details>
+      <details>
+        <summary>Jump hosts, bastions, ProxyJump?</summary>
+        <p>Yes, through your <code>~/.ssh/config</code>, exactly as ssh does.</p>
+      </details>
+      <details>
+        <summary>Password logins?</summary>
+        <p>Yes. Shellpane saves a password in your Keychain only after it has worked, and there's a switch to not save it at all.</p>
+      </details>
+      <details>
+        <summary>Which servers does it work with?</summary>
+        <p>Any server with SSH and SFTP: Linux, BSD, macOS, most NAS boxes. FTP, S3 and cloud drives aren't supported. Shellpane does one thing.</p>
+      </details>
+      <details>
+        <summary>Does it phone home?</summary>
+        <p>No analytics and no tracking. Shellpane makes no network connections other than the SSH connections you open.</p>
+      </details>
+      <details>
+        <summary>Why does macOS say it can't verify Shellpane?</summary>
+        <p>Until it's notarised by Apple, macOS asks the first time. Click Done, then open System Settings › Privacy &amp; Security, scroll down and click Open Anyway. You only do this once. Or build it yourself from the source.</p>
+      </details>
+      <details>
+        <summary>I'm coming from another SFTP app. Can I bring my servers?</summary>
+        <p>Your <code>~/.ssh/config</code> hosts appear on first launch. Other saved servers can be added once with the Connect form, and from then on you can export and import Shellpane's list between Macs.</p>
+      </details>
+      <details>
+        <summary>What do I need?</summary>
+        <p>macOS 14 or later, on an Apple silicon or Intel Mac.</p>
+      </details>
+    </div>
+  </section>
+
+  <section class="alt final" id="download">
+    <div class="wrap">
+      <h2>If ssh works, Shellpane works.</h2>
+      <p>Free and open source. No account, nothing to set up.</p>
+      <div class="actions">
+        <a class="button" href="https://github.com/tfcoelho/shellpane/releases/latest/download/Shellpane.dmg">Download for Mac</a>
+        <a class="button secondary" href="https://github.com/tfcoelho/shellpane">View on GitHub</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 Shellpane · MIT licence</span>
+    <span><a href="guides/1password-ssh-agent-sftp-mac.html">Guide: 1Password SSH agent</a> · <a href="https://github.com/tfcoelho/shellpane/issues">Report a problem</a> · <a href="privacy.html">Privacy</a></span>
+  </div>
+</footer>
+
+</body>
+</html>

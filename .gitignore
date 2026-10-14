@@ -1,0 +1,16 @@
+# Build output
+.build/
+build/
+*.xcuserstate
+.DS_Store
+
+# Private working notes (research, plans, screenshots): stay on this Mac
+replica/
+
+# Video project: dependencies, renders, and the captured app states (scripts/video-footage.sh recreates them)
+video/node_modules/
+video/out/
+video/public/states/
+
+# Editor settings
+.vscode/
