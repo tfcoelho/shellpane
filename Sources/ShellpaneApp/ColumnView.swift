@@ -141,6 +141,11 @@ final class ColumnController: NSObject, NSBrowserDelegate {
             line.append(NSAttributedString(string: "  "))
         }
         line.append(NSAttributedString(string: e.name, attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)]))
+        // One line, shortened in the middle like Finder: left to wrap, a long name moves to a second line
+        // the row clips, and only the icon shows.
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingMiddle
+        line.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: line.length))
         return line
     }
 
