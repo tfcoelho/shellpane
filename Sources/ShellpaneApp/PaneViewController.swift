@@ -175,6 +175,8 @@ final class PaneCellView: NSTableCellView {
     /// Name column only: the triangle that shows a folder's contents in place, and the indent for nested rows.
     var disclosure: NSButton?
     var indent: NSLayoutConstraint?
+    /// Name column only: the icon's width and height, which follow the pane's zoom.
+    var iconSide: [NSLayoutConstraint] = []
 
     override var backgroundStyle: NSView.BackgroundStyle { didSet { apply() } }
 
@@ -243,6 +245,45 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     let tableView = PaneTableView()
+
+    /// ⌘+ / ⌘- / ⌘0, as in Finder: how big names and icons are, in all three views. 1 is normal.
+    /// Each pane has its own; the last one set is where new panes start, next launch too.
+    static let zoomSteps: [CGFloat] = [0.85, 1, 1.15, 1.3, 1.5, 1.75, 2]
+    var zoom: CGFloat = PaneViewController.savedZoom {
+        didSet {
+            guard zoom != oldValue else { return }
+            UserDefaults.standard.set(Double(zoom), forKey: "ShellpaneZoom")
+            applyZoom()
+        }
+    }
+    private static var savedZoom: CGFloat {
+        let z = CGFloat(UserDefaults.standard.double(forKey: "ShellpaneZoom"))
+        return zoomSteps.contains(z) ? z : 1
+    }
+
+    /// The list's column widths at normal size.
+    private static let columnWidths: [String: CGFloat] = ["name": 220, "size": 72, "date": 128, "kind": 100]
+
+    func zoomIn() { stepZoom(+1) }
+    func zoomOut() { stepZoom(-1) }
+    func resetZoom() { zoom = 1 }
+
+    private func stepZoom(_ by: Int) {
+        let i = (Self.zoomSteps.firstIndex(of: zoom) ?? 1) + by
+        guard Self.zoomSteps.indices.contains(i) else { NSSound.beep(); return }
+        zoom = Self.zoomSteps[i]
+    }
+
+    private func applyZoom() {
+        tableView.rowHeight = (Tokens.Size.rowMedium * zoom).rounded()
+        // Size, date and kind grow with their text so they don't cut it off; the name takes what's left.
+        for c in tableView.tableColumns where c.identifier.rawValue != "name" {
+            c.width = ((Self.columnWidths[c.identifier.rawValue] ?? c.width) * zoom).rounded()
+        }
+        tableView.reloadData()   // keeps the selection
+        icons.zoom = zoom
+        columns.zoom = zoom
+    }
     private let scrollView = NSScrollView()
     private let pathHost = NSHostingView(rootView: AnyView(EmptyView()))
     private let tabHost = NSHostingView(rootView: AnyView(EmptyView()))
@@ -437,16 +478,16 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private func configureTable() {
-        let columns: [(String, String, CGFloat, String)] = [
-            ("name", "Name", 220, "name"),
-            ("size", "Size", 72, "size"),
-            ("date", "Date Modified", 128, "date"),
-            ("kind", "Kind", 100, "kind"),
+        let columns: [(String, String, String)] = [
+            ("name", "Name", "name"),
+            ("size", "Size", "size"),
+            ("date", "Date Modified", "date"),
+            ("kind", "Kind", "kind"),
         ]
-        for (id, title, width, key) in columns {
+        for (id, title, key) in columns {
             let c = NSTableColumn(identifier: .init(id))
             c.title = title
-            c.width = width
+            c.width = ((Self.columnWidths[id] ?? 100) * (id == "name" ? 1 : zoom)).rounded()
             c.minWidth = id == "name" ? 120 : 50
             c.sortDescriptorPrototype = NSSortDescriptor(key: key, ascending: true)
             if id == "size" { c.headerCell.alignment = .right }
@@ -454,7 +495,9 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
         }
         tableView.sortDescriptors = [NSSortDescriptor(key: "name", ascending: true)]
         tableView.style = .fullWidth
-        tableView.rowHeight = Tokens.Size.rowMedium
+        tableView.rowHeight = (Tokens.Size.rowMedium * zoom).rounded()
+        icons.zoom = zoom
+        self.columns.zoom = zoom
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.allowsMultipleSelection = true
         tableView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
@@ -1097,16 +1140,20 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
         let entry = entries[row]
         let id = column.identifier
         let cell = (tableView.makeView(withIdentifier: id, owner: self) as? PaneCellView) ?? makeCell(id)
+        cell.textField?.font = .systemFont(ofSize: (NSFont.systemFontSize * zoom).rounded())
         switch id.rawValue {
         case "name":
+            let side = (Tokens.Size.iconRow * zoom).rounded()
+            cell.iconSide.forEach { $0.constant = side }
             cell.textField?.stringValue = entry.name
             let depth = row < depths.count ? depths[row] : 0
             cell.indent?.constant = Tokens.Space.s2 + CGFloat(depth) * Self.indentStep
             cell.disclosure?.isHidden = !entry.isDirectory || viewMode != .list
             cell.disclosure?.state = expanded[entry.path] != nil ? .on : .off
             cell.disclosure?.setAccessibilityLabel(expanded[entry.path] != nil ? "Hide contents of \(entry.name)" : "Show contents of \(entry.name)")
-            cell.imageView?.image = entry.isDirectory ? Self.folderIcon(size: Tokens.Size.iconRow)
-                : NSImage(systemSymbolName: Self.symbol(for: entry), accessibilityDescription: nil)
+            cell.imageView?.image = entry.isDirectory ? Self.folderIcon(size: side)
+                : NSImage(systemSymbolName: Self.symbol(for: entry), accessibilityDescription: nil)?
+                    .withSymbolConfiguration(.init(pointSize: (NSFont.systemFontSize * zoom).rounded(), weight: .regular))
             cell.normalTint = Tokens.NSColors.textMuted
             cell.normalText = entry.isHidden ? Tokens.NSColors.textMuted : Tokens.NSColors.text
             cell.setAccessibilityLabel("\(entry.name), \(entry.isDirectory ? "folder" : "file")")
@@ -1144,14 +1191,14 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
             image.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(image)
             cell.imageView = image
-            NSLayoutConstraint.activate([
+            cell.iconSide = [image.widthAnchor.constraint(equalToConstant: Tokens.Size.iconRow),
+                             image.heightAnchor.constraint(equalToConstant: Tokens.Size.iconRow)]
+            NSLayoutConstraint.activate(cell.iconSide + [
                 indent,
                 disclosure.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                 disclosure.widthAnchor.constraint(equalToConstant: 13),
                 image.leadingAnchor.constraint(equalTo: disclosure.trailingAnchor, constant: Tokens.Space.s2),
                 image.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                image.widthAnchor.constraint(equalToConstant: Tokens.Size.iconRow),
-                image.heightAnchor.constraint(equalToConstant: Tokens.Size.iconRow),
                 text.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: Tokens.Space.s6),
             ])
         } else {

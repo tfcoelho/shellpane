@@ -554,6 +554,17 @@ enum SelfTest {
         }
         keyThroughApp(code: 18, chars: "1", mods: .command)                     // ⌘1
         check("F02-H8 ⌘1 goes back to the list", right.viewMode == .list && right.icons.scrollView.isHidden)
+
+        // F02-H12 ⌘+ / ⌘- / ⌘0 make the active pane's rows bigger and smaller, as in Finder
+        let normalRow = right.tableView.rowHeight
+        right.resetZoom()
+        keyThroughApp(code: 24, chars: "=", mods: .command)                     // ⌘= (⌘+ without Shift)
+        check("F02-H12 ⌘+ makes rows bigger", right.zoom > 1 && right.tableView.rowHeight > normalRow, "zoom \(right.zoom)")
+        keyThroughApp(code: 27, chars: "-", mods: .command)                     // ⌘-
+        keyThroughApp(code: 27, chars: "-", mods: .command)
+        check("F02-H12 ⌘- makes rows smaller", right.zoom < 1 && right.tableView.rowHeight < normalRow, "zoom \(right.zoom)")
+        keyThroughApp(code: 29, chars: "0", mods: .command)                     // ⌘0
+        check("F02-H12 ⌘0 is back to normal", right.zoom == 1 && right.tableView.rowHeight == normalRow)
         right.navigate(to: right.location.with(path: remoteRoot))
         _ = await waitUntil { !right.entries.isEmpty }
 

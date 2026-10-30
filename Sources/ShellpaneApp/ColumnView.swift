@@ -18,6 +18,23 @@ final class ColumnController: NSObject, NSBrowserDelegate {
     /// The deepest folder the person has opened, and what's selected in it.
     var onSelectionChange: (_ folder: String, _ selected: [FileEntry]) -> Void = { _, _ in }
     var onOpenFile: (FileEntry) -> Void = { _ in }
+    /// The pane's ⌘+ / ⌘- size: rows, names, icons and new columns grow together.
+    var zoom: CGFloat = 1 {
+        didSet {
+            guard zoom != oldValue else { return }
+            applyZoom()
+            let path = browser.path()
+            browser.loadColumnZero()
+            browser.setPath(path)
+        }
+    }
+    private lazy var baseRowHeight = browser.rowHeight
+
+    private func applyZoom() {
+        browser.rowHeight = (baseRowHeight * zoom).rounded()
+        browser.minColumnWidth = (180 * zoom).rounded()
+        browser.setDefaultColumnWidth((220 * zoom).rounded())
+    }
 
     override init() {
         super.init()
@@ -29,8 +46,7 @@ final class ColumnController: NSObject, NSBrowserDelegate {
         browser.hasHorizontalScroller = true
         browser.separatesColumns = true
         browser.isTitled = false
-        browser.minColumnWidth = 180
-        browser.setDefaultColumnWidth(220)
+        applyZoom()
         browser.columnResizingType = .userColumnResizing
         browser.setAccessibilityLabel("Folders and files in columns")
     }
@@ -120,14 +136,15 @@ final class ColumnController: NSObject, NSBrowserDelegate {
     func browser(_ browser: NSBrowser, objectValueForItem item: Any?) -> Any? {
         guard let path = item as? String else { return nil }
         guard let e = entries[path] else { return (path as NSString).lastPathComponent }
-        let config = NSImage.SymbolConfiguration(pointSize: Tokens.Size.iconRow - 3, weight: .regular)
+        let iconSide = (Tokens.Size.iconRow * zoom).rounded()
+        let config = NSImage.SymbolConfiguration(pointSize: iconSide - 3, weight: .regular)
             .applying(NSImage.SymbolConfiguration(paletteColors: [Tokens.NSColors.textMuted]))
         let line = NSMutableAttributedString()
-        let icon = e.isDirectory ? PaneViewController.folderIcon(size: Tokens.Size.iconRow)
+        let icon = e.isDirectory ? PaneViewController.folderIcon(size: iconSide)
             : NSImage(systemSymbolName: PaneViewController.symbol(for: e), accessibilityDescription: nil)?.withSymbolConfiguration(config)
         if let symbol = icon {
             // A fixed-width box, so names line up whatever the symbol's width.
-            let box = NSSize(width: Tokens.Size.iconRow + 4, height: max(symbol.size.height, Tokens.Size.iconRow - 2))
+            let box = NSSize(width: iconSide + 4, height: max(symbol.size.height, iconSide - 2))
             let image = NSImage(size: box, flipped: false) { rect in
                 symbol.draw(in: NSRect(x: (rect.width - symbol.size.width) / 2, y: (rect.height - symbol.size.height) / 2,
                                        width: symbol.size.width, height: symbol.size.height))
@@ -135,12 +152,12 @@ final class ColumnController: NSObject, NSBrowserDelegate {
             }
             let attachment = NSTextAttachment()
             attachment.image = image
-            let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+            let font = NSFont.systemFont(ofSize: (NSFont.systemFontSize * zoom).rounded())
             attachment.bounds = NSRect(x: 0, y: (font.capHeight - box.height) / 2, width: box.width, height: box.height)
             line.append(NSAttributedString(attachment: attachment))
             line.append(NSAttributedString(string: "  "))
         }
-        line.append(NSAttributedString(string: e.name, attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)]))
+        line.append(NSAttributedString(string: e.name, attributes: [.font: NSFont.systemFont(ofSize: (NSFont.systemFontSize * zoom).rounded())]))
         // One line, shortened in the middle like Finder: left to wrap, a long name moves to a second line
         // the row clips, and only the icon shows.
         let style = NSMutableParagraphStyle()

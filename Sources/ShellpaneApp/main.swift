@@ -84,6 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func viewAsList(_ sender: Any?) { main?.viewAsList(sender) }
     @objc func viewAsColumns(_ sender: Any?) { main?.viewAsColumns(sender) }
     @objc func viewAsIcons(_ sender: Any?) { main?.viewAsIcons(sender) }
+    @objc func makeBigger(_ sender: Any?) { main?.activePane.zoomIn() }
+    @objc func makeSmaller(_ sender: Any?) { main?.activePane.zoomOut() }
+    @objc func actualSize(_ sender: Any?) { main?.activePane.resetZoom() }
     @objc func closeTabOrWindow(_ sender: Any?) { main?.closeTabOrWindow(sender) }
     @objc func nextTab(_ sender: Any?) { main?.nextTab(sender) }
     @objc func previousTab(_ sender: Any?) { main?.previousTab(sender) }
@@ -118,6 +121,10 @@ enum MainMenu {
         let down = String(UnicodeScalar(NSDownArrowFunctionKey)!)
         let f5 = String(UnicodeScalar(NSF5FunctionKey)!)
         let f6 = String(UnicodeScalar(NSF6FunctionKey)!)
+        // ⌘+ is ⌘= without Shift on most keyboards: a hidden twin catches that one.
+        let biggerWithoutShift = item("Make Bigger", #selector(AppDelegate.makeBigger(_:)), "=")
+        biggerWithoutShift.isHidden = true
+        biggerWithoutShift.allowsKeyEquivalentWhenHidden = true
 
         submenu("Shellpane", [
             item("About Shellpane", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
@@ -164,6 +171,11 @@ enum MainMenu {
             item("as List", #selector(AppDelegate.viewAsList(_:)), "1"),
             item("as Icons", #selector(AppDelegate.viewAsIcons(_:)), "2"),
             item("as Columns", #selector(AppDelegate.viewAsColumns(_:)), "3"),
+            .separator(),
+            item("Make Bigger", #selector(AppDelegate.makeBigger(_:)), "+"),
+            biggerWithoutShift,
+            item("Make Smaller", #selector(AppDelegate.makeSmaller(_:)), "-"),
+            item("Actual Size", #selector(AppDelegate.actualSize(_:)), "0"),
             .separator(),
             item("Show Hidden Files", #selector(AppDelegate.toggleHidden(_:)), ".", [.command, .shift]),
             item("Filter", #selector(AppDelegate.toggleFilter(_:)), "f", [.command, .option]),

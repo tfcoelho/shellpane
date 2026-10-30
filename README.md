@@ -29,7 +29,7 @@ so your `~/.ssh/config`, keys, agent (1Password, Secretive…), jump hosts and `
 - **An organised sidebar.** Servers with their own icon and colour, in groups; favourite folders, on your Mac
   or on a server; your Finder Favorites and tags.
 - **Keyboard first.** Space marks files, F5 copies to the other pane, F6 moves, F4 edits on the server, `/`
-  filters, → and ← open folders in place, ⌘L types a path.
+  filters, → and ← open folders in place, ⌘L types a path, ⌘+ and ⌘- make files bigger or smaller.
 - **Errors you can act on.** ssh's own words, plus a button that copies the same login as `ssh -v`.
 - **Safe by default.** A changed host key is a hard stop. Passwords live in your Keychain.
 - **And the rest:** tabs, list, icon and column views, a transfer queue you can pause, folder sync with a

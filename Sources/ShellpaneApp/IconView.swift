@@ -7,6 +7,7 @@ final class IconItem: NSCollectionViewItem {
     static let id = NSUserInterfaceItemIdentifier("IconItem")
     private let icon = NSImageView()
     private let label = NSTextField(wrappingLabelWithString: "")
+    private var iconSide: [NSLayoutConstraint] = []
 
     override func loadView() {
         let v = NSView()
@@ -20,11 +21,11 @@ final class IconItem: NSCollectionViewItem {
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         v.addSubview(icon)
         v.addSubview(label)
-        NSLayoutConstraint.activate([
+        iconSide = [icon.widthAnchor.constraint(equalToConstant: Tokens.Size.iconEmpty),
+                    icon.heightAnchor.constraint(equalToConstant: Tokens.Size.iconEmpty)]
+        NSLayoutConstraint.activate(iconSide + [
             icon.topAnchor.constraint(equalTo: v.topAnchor, constant: Tokens.Space.s8),
             icon.centerXAnchor.constraint(equalTo: v.centerXAnchor),
-            icon.widthAnchor.constraint(equalToConstant: Tokens.Size.iconEmpty),
-            icon.heightAnchor.constraint(equalToConstant: Tokens.Size.iconEmpty),
             label.topAnchor.constraint(equalTo: icon.bottomAnchor, constant: Tokens.Space.s4),
             label.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: Tokens.Space.s4),
             label.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -Tokens.Space.s4),
@@ -32,9 +33,12 @@ final class IconItem: NSCollectionViewItem {
         view = v
     }
 
-    func show(_ e: FileEntry) {
-        let config = NSImage.SymbolConfiguration(pointSize: Tokens.Size.iconEmpty - 8, weight: .light)
-        icon.image = e.isDirectory ? PaneViewController.folderIcon(size: Tokens.Size.iconEmpty)
+    func show(_ e: FileEntry, zoom: CGFloat) {
+        let side = (Tokens.Size.iconEmpty * zoom).rounded()
+        iconSide.forEach { $0.constant = side }
+        label.font = .systemFont(ofSize: (NSFont.smallSystemFontSize * zoom).rounded())
+        let config = NSImage.SymbolConfiguration(pointSize: side - 8, weight: .light)
+        icon.image = e.isDirectory ? PaneViewController.folderIcon(size: side)
             : NSImage(systemSymbolName: PaneViewController.symbol(for: e), accessibilityDescription: nil)?.withSymbolConfiguration(config)
         icon.contentTintColor = Tokens.NSColors.textMuted
         label.stringValue = e.name
@@ -88,11 +92,24 @@ final class IconController: NSObject, NSCollectionViewDataSource, NSCollectionVi
     let collection = IconCollectionView()
     private var entries: [FileEntry] = []
     var onSelectionChange: () -> Void = {}
+    /// The pane's ⌘+ / ⌘- size: icons, labels and the grid grow together.
+    var zoom: CGFloat = 1 {
+        didSet {
+            guard zoom != oldValue else { return }
+            (collection.collectionViewLayout as? NSCollectionViewFlowLayout)?.itemSize = Self.itemSize(zoom)
+            let keep = collection.selectionIndexPaths
+            collection.reloadData()
+            collection.selectionIndexPaths = keep
+        }
+    }
+    private static func itemSize(_ zoom: CGFloat) -> NSSize {
+        NSSize(width: (104 * zoom).rounded(), height: (96 * zoom).rounded())
+    }
 
     override init() {
         super.init()
         let layout = NSCollectionViewFlowLayout()
-        layout.itemSize = NSSize(width: 104, height: 96)
+        layout.itemSize = Self.itemSize(zoom)
         layout.minimumInteritemSpacing = Tokens.Space.s8
         layout.minimumLineSpacing = Tokens.Space.s8
         layout.sectionInset = NSEdgeInsets(top: Tokens.Space.s12, left: Tokens.Space.s12, bottom: Tokens.Space.s12, right: Tokens.Space.s12)
@@ -131,7 +148,7 @@ final class IconController: NSObject, NSCollectionViewDataSource, NSCollectionVi
 
     func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
         let item = collectionView.makeItem(withIdentifier: IconItem.id, for: indexPath)
-        if let icon = item as? IconItem, indexPath.item < entries.count { icon.show(entries[indexPath.item]) }
+        if let icon = item as? IconItem, indexPath.item < entries.count { icon.show(entries[indexPath.item], zoom: zoom) }
         return item
     }
 
