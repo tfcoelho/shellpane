@@ -1105,6 +1105,26 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
         return image
     }
     private static let folderIconSource = NSWorkspace.shared.icon(for: .folder)
+
+    /// The icon Finder shows for this kind of file (PDF, Word, plain text…), from its extension alone, so
+    /// files on a server get theirs too. Packages such as .app show as their kind, other folders as folders.
+    static func fileIcon(for entry: FileEntry, size: CGFloat) -> NSImage {
+        let ext = (entry.name as NSString).pathExtension.lowercased()
+        let type = ext.isEmpty ? nil : UTType(filenameExtension: ext, conformingTo: entry.isDirectory ? .directory : .data)
+        if entry.isDirectory, type?.conforms(to: .package) != true { return folderIcon(size: size) }
+        let key = (entry.isDirectory ? "/" : "") + ext
+        let source: NSImage
+        if let cached = typeIcons[key] {
+            source = cached
+        } else {
+            source = NSWorkspace.shared.icon(for: type ?? .data)
+            typeIcons[key] = source
+        }
+        let image = (source.copy() as? NSImage) ?? source
+        image.size = NSSize(width: size, height: size)
+        return image
+    }
+    private static var typeIcons: [String: NSImage] = [:]
     /// How far each level of an open folder is indented, as in Finder.
     static let indentStep: CGFloat = 16
 
@@ -1151,9 +1171,7 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
             cell.disclosure?.isHidden = !entry.isDirectory || viewMode != .list
             cell.disclosure?.state = expanded[entry.path] != nil ? .on : .off
             cell.disclosure?.setAccessibilityLabel(expanded[entry.path] != nil ? "Hide contents of \(entry.name)" : "Show contents of \(entry.name)")
-            cell.imageView?.image = entry.isDirectory ? Self.folderIcon(size: side)
-                : NSImage(systemSymbolName: Self.symbol(for: entry), accessibilityDescription: nil)?
-                    .withSymbolConfiguration(.init(pointSize: (NSFont.systemFontSize * zoom).rounded(), weight: .regular))
+            cell.imageView?.image = Self.fileIcon(for: entry, size: side)
             cell.normalTint = Tokens.NSColors.textMuted
             cell.normalText = entry.isHidden ? Tokens.NSColors.textMuted : Tokens.NSColors.text
             cell.setAccessibilityLabel("\(entry.name), \(entry.isDirectory ? "folder" : "file")")

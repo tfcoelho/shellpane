@@ -3,6 +3,38 @@ import ShellpaneUI
 import SFTPKit
 
 /// Icon view (⌘2): the pane's files as a grid. Same listing, keys and context menu as the list.
+/// Sized like Finder's icon view at its defaults: 64 pt icons, 12 pt names, a fixed grid from the left.
+enum IconMetrics {
+    static let icon: CGFloat = 64
+    static let font: CGFloat = 12
+    static let item = NSSize(width: 112, height: 108)
+    static let gap: CGFloat = 6
+}
+
+/// A flow layout that keeps Finder's fixed grid: rows start at the left and keep the same gap, instead
+/// of spreading items out to fill each row.
+final class LeftAlignedFlowLayout: NSCollectionViewFlowLayout {
+    override func layoutAttributesForElements(in rect: NSRect) -> [NSCollectionViewLayoutAttributes] {
+        let attributes = super.layoutAttributesForElements(in: rect).compactMap { $0.copy() as? NSCollectionViewLayoutAttributes }
+        var x = sectionInset.left
+        var rowY: CGFloat = -.greatestFiniteMagnitude
+        for a in attributes where a.representedElementCategory == .item {
+            if abs(a.frame.minY - rowY) > 1 { x = sectionInset.left; rowY = a.frame.minY }
+            a.frame.origin.x = x
+            x += a.frame.width + minimumInteritemSpacing
+        }
+        return attributes
+    }
+
+    override func layoutAttributesForItem(at indexPath: IndexPath) -> NSCollectionViewLayoutAttributes? {
+        guard let base = super.layoutAttributesForItem(at: indexPath) else { return nil }
+        return layoutAttributesForElements(in: base.frame.insetBy(dx: -.greatestFiniteMagnitude / 4, dy: 0))
+            .first { $0.indexPath == indexPath } ?? base
+    }
+
+    override func shouldInvalidateLayout(forBoundsChange newBounds: NSRect) -> Bool { true }
+}
+
 final class IconItem: NSCollectionViewItem {
     static let id = NSUserInterfaceItemIdentifier("IconItem")
     private let icon = NSImageView()
@@ -18,15 +50,15 @@ final class IconItem: NSCollectionViewItem {
         label.alignment = .center
         label.maximumNumberOfLines = 2
         label.lineBreakMode = .byTruncatingMiddle
-        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.font = .systemFont(ofSize: IconMetrics.font)
         v.addSubview(icon)
         v.addSubview(label)
-        iconSide = [icon.widthAnchor.constraint(equalToConstant: Tokens.Size.iconEmpty),
-                    icon.heightAnchor.constraint(equalToConstant: Tokens.Size.iconEmpty)]
+        iconSide = [icon.widthAnchor.constraint(equalToConstant: IconMetrics.icon),
+                    icon.heightAnchor.constraint(equalToConstant: IconMetrics.icon)]
         NSLayoutConstraint.activate(iconSide + [
-            icon.topAnchor.constraint(equalTo: v.topAnchor, constant: Tokens.Space.s8),
+            icon.topAnchor.constraint(equalTo: v.topAnchor, constant: Tokens.Space.s6),
             icon.centerXAnchor.constraint(equalTo: v.centerXAnchor),
-            label.topAnchor.constraint(equalTo: icon.bottomAnchor, constant: Tokens.Space.s4),
+            label.topAnchor.constraint(equalTo: icon.bottomAnchor, constant: Tokens.Space.s2),
             label.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: Tokens.Space.s4),
             label.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -Tokens.Space.s4),
         ])
@@ -34,12 +66,10 @@ final class IconItem: NSCollectionViewItem {
     }
 
     func show(_ e: FileEntry, zoom: CGFloat) {
-        let side = (Tokens.Size.iconEmpty * zoom).rounded()
+        let side = (IconMetrics.icon * zoom).rounded()
         iconSide.forEach { $0.constant = side }
-        label.font = .systemFont(ofSize: (NSFont.smallSystemFontSize * zoom).rounded())
-        let config = NSImage.SymbolConfiguration(pointSize: side - 8, weight: .light)
-        icon.image = e.isDirectory ? PaneViewController.folderIcon(size: side)
-            : NSImage(systemSymbolName: PaneViewController.symbol(for: e), accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        label.font = .systemFont(ofSize: (IconMetrics.font * zoom).rounded())
+        icon.image = PaneViewController.fileIcon(for: e, size: side)
         icon.contentTintColor = Tokens.NSColors.textMuted
         label.stringValue = e.name
         label.textColor = e.isHidden ? Tokens.NSColors.textMuted : Tokens.NSColors.text
@@ -103,15 +133,15 @@ final class IconController: NSObject, NSCollectionViewDataSource, NSCollectionVi
         }
     }
     private static func itemSize(_ zoom: CGFloat) -> NSSize {
-        NSSize(width: (104 * zoom).rounded(), height: (96 * zoom).rounded())
+        NSSize(width: (IconMetrics.item.width * zoom).rounded(), height: (IconMetrics.item.height * zoom).rounded())
     }
 
     override init() {
         super.init()
-        let layout = NSCollectionViewFlowLayout()
+        let layout = LeftAlignedFlowLayout()
         layout.itemSize = Self.itemSize(zoom)
-        layout.minimumInteritemSpacing = Tokens.Space.s8
-        layout.minimumLineSpacing = Tokens.Space.s8
+        layout.minimumInteritemSpacing = IconMetrics.gap
+        layout.minimumLineSpacing = IconMetrics.gap
         layout.sectionInset = NSEdgeInsets(top: Tokens.Space.s12, left: Tokens.Space.s12, bottom: Tokens.Space.s12, right: Tokens.Space.s12)
         collection.collectionViewLayout = layout
         collection.isSelectable = true

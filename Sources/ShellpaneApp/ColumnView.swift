@@ -137,13 +137,10 @@ final class ColumnController: NSObject, NSBrowserDelegate {
         guard let path = item as? String else { return nil }
         guard let e = entries[path] else { return (path as NSString).lastPathComponent }
         let iconSide = (Tokens.Size.iconRow * zoom).rounded()
-        let config = NSImage.SymbolConfiguration(pointSize: iconSide - 3, weight: .regular)
-            .applying(NSImage.SymbolConfiguration(paletteColors: [Tokens.NSColors.textMuted]))
         let line = NSMutableAttributedString()
-        let icon = e.isDirectory ? PaneViewController.folderIcon(size: iconSide)
-            : NSImage(systemSymbolName: PaneViewController.symbol(for: e), accessibilityDescription: nil)?.withSymbolConfiguration(config)
-        if let symbol = icon {
-            // A fixed-width box, so names line up whatever the symbol's width.
+        do {
+            let symbol = PaneViewController.fileIcon(for: e, size: iconSide)
+            // A fixed-width box, so names line up whatever the icon's width.
             let box = NSSize(width: iconSide + 4, height: max(symbol.size.height, iconSide - 2))
             let image = NSImage(size: box, flipped: false) { rect in
                 symbol.draw(in: NSRect(x: (rect.width - symbol.size.width) / 2, y: (rect.height - symbol.size.height) / 2,
