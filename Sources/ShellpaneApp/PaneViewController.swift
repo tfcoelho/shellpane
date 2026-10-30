@@ -250,6 +250,8 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
     let filterField = NSSearchField()
     /// Typing a path (click the path bar's empty part, ⌘L, ⇧⌘G): a field laid over the path bar.
     let pathField = NSTextField()
+    /// Moved after the host chip on a server, so user@host stays in view while typing.
+    private lazy var pathFieldLeading = pathField.leadingAnchor.constraint(equalTo: pathHost.leadingAnchor, constant: Tokens.Space.s6)
     private var filterHeight: NSLayoutConstraint?
     private(set) var filterText = ""
     private var tabHeight: NSLayoutConstraint?
@@ -389,7 +391,7 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
             activeMarker.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             activeMarker.heightAnchor.constraint(equalToConstant: Tokens.Size.activePaneMarker),
 
-            pathField.leadingAnchor.constraint(equalTo: pathHost.leadingAnchor, constant: Tokens.Space.s6),
+            pathFieldLeading,
             // Stops short of the ☆ and copy buttons, which stay usable while typing.
             pathField.trailingAnchor.constraint(equalTo: pathHost.trailingAnchor, constant: -56),
             pathField.centerYAnchor.constraint(equalTo: pathHost.centerYAnchor),
@@ -804,6 +806,7 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
         }
         let loc = location
         let bookmarked = tag == nil && (delegate?.pane(self, isBookmarked: loc.path) ?? false)
+        if remote == nil { pathFieldLeading.constant = Tokens.Space.s6 }
         pathHost.rootView = AnyView(PathBar(
             remote: remote, path: loc.path, isBookmarked: bookmarked, isEditing: !pathField.isHidden,
             tag: tag.map { ($0.name, $0.nsColor.map { Color(nsColor: $0) }) },
@@ -813,6 +816,13 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
             onToggleBookmark: { [weak self] in
                 guard let self else { return }
                 self.delegate?.pane(self, setBookmarked: !bookmarked, path: loc.path)
+            },
+            onChipEnd: { [weak self] end in
+                // Reported during SwiftUI layout: change the constraint after it.
+                DispatchQueue.main.async {
+                    guard let self, self.location.session != nil else { return }
+                    self.pathFieldLeading.constant = end + Tokens.Space.s4
+                }
             }))
 
         let selected = selectedEntries

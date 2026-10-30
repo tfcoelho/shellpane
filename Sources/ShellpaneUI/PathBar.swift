@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Where a pane is: optional host chip, then breadcrumb segments. Click a segment to go there.
-/// Click the empty part (or ⌘L / ⇧⌘G) to type a path: the pane puts its own text field over the bar.
+/// Click the empty part (or ⌘L / ⇧⌘G) to type a path: the pane puts its own text field over the bar,
+/// after the host chip.
 /// At the end: ☆ adds the folder to Favorite Folders, and the copy button copies its path.
 public struct PathBar: View {
     public struct Remote: Sendable {
@@ -30,11 +31,16 @@ public struct PathBar: View {
     /// true: as "host:/path" (or "user@host:/path"), ready for scp or rsync.
     let onCopy: (_ remoteForm: Bool) -> Void
     let onToggleBookmark: () -> Void
+    /// Where the host chip ends, in the bar's coordinates: the pane starts its path field after it.
+    let onChipEnd: (CGFloat) -> Void
+
+    private static let space = "PathBar"
 
     public init(remote: Remote?, path: String, isBookmarked: Bool = false, isEditing: Bool = false,
                 tag: (name: String, colour: Color?)? = nil,
                 onNavigate: @escaping (String) -> Void = { _ in }, onEdit: @escaping () -> Void = {},
-                onCopy: @escaping (_ remoteForm: Bool) -> Void = { _ in }, onToggleBookmark: @escaping () -> Void = {}) {
+                onCopy: @escaping (_ remoteForm: Bool) -> Void = { _ in }, onToggleBookmark: @escaping () -> Void = {},
+                onChipEnd: @escaping (CGFloat) -> Void = { _ in }) {
         self.remote = remote
         self.path = path
         self.isBookmarked = isBookmarked
@@ -44,6 +50,7 @@ public struct PathBar: View {
         self.onEdit = onEdit
         self.onCopy = onCopy
         self.onToggleBookmark = onToggleBookmark
+        self.onChipEnd = onChipEnd
     }
 
     /// "/var/www/site" -> [("/", "/"), ("var", "/var"), ("www", "/var/www"), ("site", "/var/www/site")]
@@ -74,6 +81,12 @@ public struct PathBar: View {
                         .overlay(Capsule().strokeBorder(Tokens.Colors.border))
                         .accessibilityLabel("Connected to \(remote.host) as \(remote.user)")
                         .fixedSize()          // the server never shortens; long paths do
+                        .background(GeometryReader { g in
+                            let end = g.frame(in: .named(Self.space)).maxX
+                            Color.clear
+                                .onAppear { onChipEnd(end) }
+                                .onChange(of: end) { _, x in onChipEnd(x) }
+                        })
                 }
                 Group {
                     if let tag {
@@ -123,6 +136,7 @@ public struct PathBar: View {
             .frame(height: Tokens.Size.pathBar - (remote == nil ? 0 : Tokens.Size.connectionBar))
             .background(Tokens.Colors.surface)
         }
+        .coordinateSpace(name: Self.space)
     }
 
     private var breadcrumbs: some View {
