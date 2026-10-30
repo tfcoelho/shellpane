@@ -2,11 +2,62 @@ import AppKit
 import ShellpaneUI
 import SFTPKit
 
+/// Two things NSBrowser does that Finder doesn't. With scroll bars set to always show, every column gets a
+/// scroller track; and past the last folder it draws empty placeholder columns, whose tracks stop short of
+/// the bottom. Here columns use overlay scrollers (a thin divider, the bar while scrolling), and a blank
+/// cover hides the placeholders, so the area after the last column is empty, as in Finder.
+final class ColumnBrowser: NSBrowser {
+    private final class Cover: NSView {
+        var colour: NSColor = .clear
+        override func draw(_ dirtyRect: NSRect) { colour.setFill(); bounds.intersection(dirtyRect).fill() }   // views don't clip to their bounds since macOS 14
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }   // clicks go to the browser underneath
+    }
+    private let cover = Cover()
+    /// The pane's folder has nothing in it: the pane says so in the middle, and the cover hides the empty
+    /// first column too, so its divider doesn't run through that message.
+    var isEmptyFolder = false {
+        didSet { if isEmptyFolder != oldValue { coverPlaceholders() } }
+    }
+
+    override func tile() {
+        super.tile()
+        func walk(_ v: NSView) {
+            if let scroll = v as? NSScrollView, scroll.scrollerStyle != .overlay { scroll.scrollerStyle = .overlay }
+            v.subviews.forEach(walk)
+        }
+        walk(self)
+        coverPlaceholders()
+    }
+
+    private func coverPlaceholders() {
+        // The browser's own scroll view, and in it the container whose subviews are the column views. The cover
+        // sits on top of the browser, over the visible part past the last column, and follows horizontal scrolling.
+        guard let scroll = subviews.first(where: { $0 !== cover }) as? NSScrollView,
+              let container = scroll.documentView else { return }
+        if cover.superview !== self || subviews.last !== cover { addSubview(cover, positioned: .above, relativeTo: nil) }
+        if observedClip !== scroll.contentView {
+            observedClip = scroll.contentView
+            scroll.contentView.postsBoundsChangedNotifications = true
+            NotificationCenter.default.addObserver(self, selector: #selector(clipScrolled), name: NSView.boundsDidChangeNotification,
+                                                   object: scroll.contentView)
+        }
+        let columns = container.subviews.map(\.frame.maxX).max() ?? 0
+        let end = isEmptyFolder ? 0 : convert(NSPoint(x: columns, y: 0), from: container).x
+        let visible = convert(scroll.contentView.bounds, from: scroll.contentView)
+        let start = max(end, visible.minX)
+        cover.colour = backgroundColor
+        cover.frame = NSRect(x: start, y: visible.minY, width: max(0, visible.maxX - start), height: visible.height)
+        cover.needsDisplay = true
+    }
+    private weak var observedClip: NSClipView?
+    @objc private func clipScrolled() { coverPlaceholders() }
+}
+
 /// Column view (⌘3): Finder-style columns from the pane's folder. Lists load in the background,
 /// local or remote alike, and each column fills in when its listing arrives.
 @MainActor
 final class ColumnController: NSObject, NSBrowserDelegate {
-    let browser = NSBrowser()
+    let browser = ColumnBrowser()
     private(set) var root: String = "/"
     private var location: Location?
     private var showHidden = false
@@ -57,6 +108,7 @@ final class ColumnController: NSObject, NSBrowserDelegate {
         self.showHidden = showHidden
         if rootChanged {
             root = location.path
+            browser.isEmptyFolder = false
             children.removeAll()
             entries.removeAll()
             failed.removeAll()
@@ -96,6 +148,7 @@ final class ColumnController: NSObject, NSBrowserDelegate {
                     }
                 children[path] = visible
                 for e in visible { entries[e.path] = e }
+                if path == root { browser.isEmptyFolder = visible.isEmpty }
             } catch {
                 failed[path] = error.localizedDescription
                 children[path] = []

@@ -73,7 +73,7 @@ extension PaneViewController {
                         let dir = QuickLookCenter.cacheRoot.appendingPathComponent(UUID().uuidString)
                         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
                         let dest = dir.appendingPathComponent(e.name)
-                        self.flash("Fetching \\(e.name) for Quick Look…")
+                        self.flash("Fetching \(e.name) for Quick Look…")
                         if (try? await live.client.download(e.path, to: dest)) != nil { urls.append(dest) }
                     }
                     return urls
