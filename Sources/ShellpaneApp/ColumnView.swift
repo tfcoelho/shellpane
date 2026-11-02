@@ -10,9 +10,50 @@ final class ColumnBrowser: NSBrowser {
     private final class Cover: NSView {
         var colour: NSColor = .clear
         override func draw(_ dirtyRect: NSRect) { colour.setFill(); bounds.intersection(dirtyRect).fill() }   // views don't clip to their bounds since macOS 14
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }   // clicks go to the browser underneath
+        /// A click in the blank area makes the pane active, as a click in a column does (nothing under it would).
+        var onClick: () -> Void = {}
+        override func mouseDown(with event: NSEvent) { onClick() }
+        override func rightMouseDown(with event: NSEvent) {
+            onClick()
+            super.rightMouseDown(with: event)   // the pane's context menu (set on the cover too)
+        }
     }
     private let cover = Cover()
+
+    /// A press anywhere in the columns (left or right button, so a context menu acts here too) makes this the
+    /// active pane, as a click in the list does. Without it the other pane stayed active, and the sidebar,
+    /// F5 and ⌘1–3 went there.
+    var onActivate: () -> Void = {}
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        let press = NSPressGestureRecognizer(target: self, action: #selector(pressed(_:)))
+        press.minimumPressDuration = 0
+        press.buttonMask = 0x1 | 0x2
+        press.delaysPrimaryMouseButtonEvents = false
+        press.delaysSecondaryMouseButtonEvents = false
+        addGestureRecognizer(press)
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func pressed(_ press: NSPressGestureRecognizer) {
+        if press.state == .began { onActivate() }
+    }
+
+    /// Clicking a column (or tabbing into one) makes one of the browser's own tables first responder:
+    /// that also makes this the active pane, at once, before the click is handled.
+    private var focusObservation: NSKeyValueObservation?
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        focusObservation = window?.observe(\.firstResponder, options: [.new]) { [weak self] window, _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.isHidden, let view = window.firstResponder as? NSView,
+                      view.isDescendant(of: self) else { return }
+                self.onActivate()
+            }
+        }
+    }
     /// The pane's folder has nothing in it: the pane says so in the middle, and the cover hides the empty
     /// first column too, so its divider doesn't run through that message.
     var isEmptyFolder = false {
@@ -46,6 +87,8 @@ final class ColumnBrowser: NSBrowser {
         let visible = convert(scroll.contentView.bounds, from: scroll.contentView)
         let start = max(end, visible.minX)
         cover.colour = backgroundColor
+        cover.menu = menu
+        cover.onClick = { [weak self] in self?.onActivate() }
         cover.frame = NSRect(x: start, y: visible.minY, width: max(0, visible.maxX - start), height: visible.height)
         cover.needsDisplay = true
     }

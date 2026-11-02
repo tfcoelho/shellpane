@@ -593,10 +593,49 @@ enum SelfTest {
                   "\(right.selectedEntries.map(\.name))")
         }
         await screenshot(c.window, "S02-columns.png")
+        // F02-H7 a click in the columns makes their pane the active one, as a click in the list does
+        // (it didn't: the sidebar, F5 and ⌘1 kept going to the other pane)
+        left.view.window?.makeFirstResponder(left.tableView)                     // as a click in the left list does
+        check("F02-H7 the other pane is active first", c.activePane === left)
+        click(b, rect: b.frame(ofRow: 0, inColumn: 0))
+        check("F02-H7 clicking in the columns makes that pane active", c.activePane === right)
+        try? await Task.sleep(for: .milliseconds(500))                            // let the click's column load settle
         keyThroughApp(code: 18, chars: "1", mods: .command)                     // ⌘1
-        check("F02-H7 ⌘1 goes back to the list", right.viewMode == .list && !right.tableView.isHidden && b.isHidden)
+        check("F02-H7 ⌘1 goes back to the list", right.viewMode == .list && !right.tableView.isHidden && b.isHidden,
+              "mode \(right.viewMode) active \(c.activePane === right ? "right" : "left") left mode \(left.viewMode)")
         right.navigate(to: right.location.with(path: remoteRoot))
         _ = await waitUntil { !right.entries.isEmpty }
+
+        // F02-H7 the reported case: the LEFT pane in columns, the right pane clicked, then back to the left.
+        // The left pane must become active again, so Back, ⌘1 and new connections go to it.
+        let leftHome = left.location.path
+        if let sub = left.entries.first(where: \.isDirectory) {
+            left.view.window?.makeFirstResponder(left.tableView)
+            left.navigate(to: left.location.with(path: sub.path))
+            _ = await waitUntil { left.location.path == sub.path }; try? await Task.sleep(for: .milliseconds(500))
+            keyThroughApp(code: 20, chars: "3", mods: .command)                 // ⌘3 on the left
+            let lb = left.columns.browser
+            _ = await waitUntil(5) { left.viewMode == .columns && lb.lastColumn >= 0 }
+            right.view.window?.makeFirstResponder(right.tableView)               // a click in the right list
+            check("F02-H7 left columns: the right pane is active after a click there", c.activePane === right)
+            // A click in the blank area past the last column (once the columns have loaded and the cover is in place)
+            try? await Task.sleep(for: .milliseconds(500))
+            click(lb, rect: NSRect(x: lb.bounds.maxX - 60, y: lb.bounds.midY, width: 20, height: 20))
+            let blankActivates = await waitUntil(2) { c.activePane === left }
+            check("F02-H7 left columns: a click in the blank area makes the left pane active", blankActivates)
+            right.view.window?.makeFirstResponder(right.tableView)
+            if lb.lastColumn >= 0, (lb.delegate?.browser?(lb, numberOfChildrenOfItem: left.columns.root as NSString) ?? 0) > 0 {
+                click(lb, rect: lb.frame(ofRow: 0, inColumn: 0))
+                check("F02-H7 left columns: a click on a row makes the left pane active", c.activePane === left)
+            }
+            try? await Task.sleep(for: .milliseconds(500))
+            keyThroughApp(code: 33, chars: "[", mods: .command)                 // ⌘[ Back
+            let back = await waitUntil(5) { left.location.path == leftHome }
+            check("F02-H7 left columns: Back goes back in the left pane", back, "left at \(left.location.path)")
+            keyThroughApp(code: 18, chars: "1", mods: .command)                 // ⌘1
+            check("F02-H7 left columns: ⌘1 goes back to the list in the left pane", left.viewMode == .list)
+        }
+        right.view.window?.makeFirstResponder(right.tableView)                   // the checks below use the right pane
 
         // F02-E3 reloading keeps the selection (a transfer finishing or a chmod reloads the pane)
         right.reload(); _ = await waitUntil { right.entries.contains { $0.name == "robots.txt" } }

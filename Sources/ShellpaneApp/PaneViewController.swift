@@ -525,6 +525,7 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
         configureDragAndDrop()
         configureMenu()
         tableView.onFocus = { [weak self] in self.map { $0.delegate?.paneDidBecomeActive($0) } }
+        self.columns.browser.onActivate = { [weak self] in self.map { $0.delegate?.paneDidBecomeActive($0) } }
     }
 
     // MARK: - Navigation
