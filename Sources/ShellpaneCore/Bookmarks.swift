@@ -13,13 +13,19 @@ public struct Bookmark: Identifiable, Equatable, Sendable {
     public var place: Place
     public var path: String
     public var sortOrder: Int
+    /// Its own icon (an SF Symbol name) and colour; nil for the default, a folder in its server's colour.
+    public var icon: String?
+    public var colour: String?
 
-    public init(id: String = UUID().uuidString, name: String, place: Place, path: String, sortOrder: Int = 0) {
+    public init(id: String = UUID().uuidString, name: String, place: Place, path: String, sortOrder: Int = 0,
+                icon: String? = nil, colour: String? = nil) {
         self.id = id
         self.name = name
         self.place = place
         self.path = path
         self.sortOrder = sortOrder
+        self.icon = icon
+        self.colour = colour
     }
 
     /// The name a new favorite folder gets: the folder's own name ("/" for the top).
@@ -41,7 +47,8 @@ public final class BookmarksStore: @unchecked Sendable {
             else if let alias = row["ssh_alias"]?.string { place = .sshAlias(alias) }
             else { place = .local }
             return Bookmark(id: row["id"]?.string ?? "", name: row["name"]?.string ?? "", place: place,
-                            path: row["path"]?.string ?? "/", sortOrder: Int(row["sort_order"]?.int ?? 0))
+                            path: row["path"]?.string ?? "/", sortOrder: Int(row["sort_order"]?.int ?? 0),
+                            icon: row["icon"]?.string, colour: row["colour"]?.string)
         }
     }
 
@@ -67,6 +74,14 @@ public final class BookmarksStore: @unchecked Sendable {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { throw Favorite.ValidationError.missingName }
         try db.execute("UPDATE bookmarks SET name = ?, updated_at = unixepoch() WHERE id = ?", [.text(trimmed), .text(id)])
+    }
+
+    /// Its name, icon and colour together, as the edit sheet saves them. nil icon or colour is the default.
+    public func update(_ id: String, name: String, icon: String?, colour: String?) throws {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { throw Favorite.ValidationError.missingName }
+        try db.execute("UPDATE bookmarks SET name = ?, icon = ?, colour = ?, updated_at = unixepoch() WHERE id = ?",
+                       [.text(trimmed), icon.sql, colour.sql, .text(id)])
     }
 
     public func delete(_ id: String) throws {

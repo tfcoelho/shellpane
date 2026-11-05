@@ -44,17 +44,72 @@ final class SidebarModel: ObservableObject {
 
     func favorites(in group: FavoriteGroup) -> [Favorite] { favorites.filter { $0.groupID == group.id } }
     var onOpenBookmark: (Bookmark) -> Void = { _ in }
-    var onRenameBookmark: (Bookmark) -> Void = { _ in }
+    var onEditBookmark: (Bookmark) -> Void = { _ in }
     var onDeleteBookmark: (Bookmark) -> Void = { _ in }
+
+    /// Chosen looks for what isn't a saved server or a favorite folder, by `AppearanceKey`.
+    @Published var appearances: [String: Appearance] = [:]
+    var onEditAppearance: (AppearanceItem) -> Void = { _ in }
+
+    func reloadAppearances() {
+        appearances = (try? ConnectionManager.shared.appearances.all()) ?? [:]
+    }
+
+    /// The icon to draw: the chosen one, or `standard` if none was chosen or it isn't known on this Mac.
+    func symbol(_ key: String, standard: String) -> String {
+        if let icon = appearances[key]?.icon, NSImage(systemSymbolName: icon, accessibilityDescription: nil) != nil { return icon }
+        return standard
+    }
+
+    /// The chosen colour, if any.
+    func ownColour(_ key: String) -> ConnectionColour? {
+        appearances[key]?.colour.flatMap(ConnectionColour.init(rawValue:))
+    }
+
+    func hostItem(_ host: String) -> AppearanceItem {
+        AppearanceItem(key: AppearanceKey.host(host), title: host, subtitle: "From ~/.ssh/config", standardIcon: "terminal",
+                       icons: AppearanceItem.icons(ServerIcons.all, with: "terminal"),
+                       footer: "How it looks in the sidebar and on the path bar. Your ~/.ssh/config isn't changed.")
+    }
+
+    func placeItem(_ place: Place) -> AppearanceItem {
+        AppearanceItem(key: AppearanceKey.place(place.path), title: place.title, subtitle: place.path, standardIcon: place.symbol,
+                       icons: AppearanceItem.icons(FolderIcons.all, with: place.symbol),
+                       footer: "How it looks in Shellpane. Finder's own sidebar isn't changed.")
+    }
+
+    func syncletItem(_ s: Synclet) -> AppearanceItem {
+        let standard = "arrow.triangle.2.circlepath"
+        return AppearanceItem(key: AppearanceKey.synclet(s.id), title: s.name, subtitle: "\(s.leftPath) ↔ \(s.rightPath)", standardIcon: standard,
+                              icons: AppearanceItem.icons(FolderIcons.all, with: standard))
+    }
+
+    func groupItem(_ g: FavoriteGroup) -> AppearanceItem {
+        AppearanceItem(key: AppearanceKey.group(g.id), title: g.name, subtitle: "Group of servers", standardIcon: "folder", icons: FolderIcons.all)
+    }
+
+    func tagItem(_ t: FinderTag) -> AppearanceItem {
+        let standard = "circle.fill"
+        return AppearanceItem(key: AppearanceKey.tag(t.name), title: t.name, subtitle: "Finder tag", standardIcon: standard,
+                              icons: AppearanceItem.icons(FolderIcons.all, with: standard), automaticHelp: "Automatic: the tag's colour in Finder",
+                              footer: "How it looks in Shellpane. The tag itself isn't changed in Finder.")
+    }
 
     func reloadBookmarks() {
         bookmarks = (try? ConnectionManager.shared.bookmarks.all()) ?? []
     }
 
-    /// A favorite folder's tint: its server's colour, so it reads as belonging to that server.
+    /// A favorite folder's tint: its own colour, or else its server's, so it reads as belonging to that server.
     func placeColour(_ b: Bookmark) -> Color? {
+        if let own = b.colour.flatMap(ConnectionColour.init(rawValue:)), own != .none { return own.color }
         guard case let .favorite(id) = b.place, let fav = favorites.first(where: { $0.id == id }) else { return nil }
         return (fav.colour.flatMap(ConnectionColour.init(rawValue:)) ?? .none).color
+    }
+
+    /// The colour a favorite folder has with none of its own: its server's, grey on this Mac.
+    func automaticColour(_ b: Bookmark) -> ConnectionColour {
+        guard case let .favorite(id) = b.place, let fav = favorites.first(where: { $0.id == id }) else { return .none }
+        return fav.colour.flatMap(ConnectionColour.init(rawValue:)) ?? .none
     }
 
     /// Where a favorite folder lives, for its row: nil on this Mac, else the server's name.
@@ -128,6 +183,18 @@ final class SidebarModel: ObservableObject {
 struct SidebarView: View {
     @ObservedObject var model: SidebarModel
 
+    /// Its chosen icon and colour; with no colour chosen, the same as a plain Label's icon.
+    @ViewBuilder
+    private func lookIcon(_ item: AppearanceItem) -> some View {
+        let symbol = Image(systemName: model.symbol(item.key, standard: item.standardIcon))
+        if let colour = model.ownColour(item.key) { symbol.foregroundStyle(colour.color) } else { symbol }
+    }
+
+    @ViewBuilder
+    private func appearanceMenu(_ item: AppearanceItem) -> some View {
+        Button("Edit Appearance…") { model.onEditAppearance(item) }
+    }
+
     var body: some View {
         List {
             Section {
@@ -148,13 +215,16 @@ struct SidebarView: View {
                                                         set: { open in if open { model.collapsed.remove(group.id) } else { model.collapsed.insert(group.id) } })) {
                         ForEach(model.favorites(in: group)) { fav in favoriteRow(fav) }
                     } label: {
+                        let item = model.groupItem(group)
                         Label {
                             Text(group.name)
                         } icon: {
-                            Image(systemName: "folder").foregroundStyle(Tokens.Colors.textMuted)
+                            Image(systemName: model.symbol(item.key, standard: item.standardIcon))
+                                .foregroundStyle(model.ownColour(item.key)?.color ?? Tokens.Colors.textMuted)
                         }
                             .contextMenu {
                                 Button("Rename Group…") { model.onRenameGroup(group) }
+                                appearanceMenu(item)
                                 Button("Delete Group", role: .destructive) { model.onDeleteGroup(group) }
                             }
                             .help("Deleting a group keeps its servers")
@@ -185,7 +255,7 @@ struct SidebarView: View {
                                 Label {
                                     Text(b.name).lineLimit(1)
                                 } icon: {
-                                    Image(systemName: host == nil ? "folder" : "folder.fill")
+                                    Image(systemName: FolderIcons.symbol(for: b))
                                         .foregroundStyle(model.placeColour(b) ?? Tokens.Colors.textMuted)
                                 }
                                 // The folder takes its server's colour; the server's name is in the tooltip.
@@ -197,7 +267,8 @@ struct SidebarView: View {
                         .help(host.map { "\($0): \(b.path)" } ?? b.path)
                         .contextMenu {
                             Button("Open") { model.onOpenBookmark(b) }
-                            Button("Rename…") { model.onRenameBookmark(b) }
+                            Divider()
+                            Button("Edit…") { model.onEditBookmark(b) }
                             Divider()
                             Button("Remove from Favorite Folders", role: .destructive) { model.onDeleteBookmark(b) }
                         }
@@ -210,13 +281,14 @@ struct SidebarView: View {
                 Section("From ~/.ssh/config") {
                     ForEach(model.unsavedHosts, id: \.self) { host in
                         let key = "alias:" + host
+                        let item = model.hostItem(host)
                         Button { model.onOpenHost(host) } label: {
                             HStack(spacing: Tokens.Space.s6) {
-                                ServerBadge(icon: "terminal", colour: .none)
+                                ServerBadge(icon: model.symbol(item.key, standard: item.standardIcon), colour: model.ownColour(item.key) ?? .none)
                                 Text(host).lineLimit(1)
                                 Spacer()
                                 if model.state(of: key) != .disconnected {
-                                    ConnectionDot(colour: model.connected[key] ?? .none, state: model.state(of: key))
+                                    ConnectionDot(colour: model.ownColour(item.key) ?? model.connected[key] ?? .none, state: model.state(of: key))
                                 }
                             }
                             .contentShape(Rectangle())
@@ -225,6 +297,8 @@ struct SidebarView: View {
                         .contextMenu {
                             Button("Connect") { model.onOpenHost(host) }
                             Button("Save as Favorite…") { model.onSaveHost(host) }
+                            Divider()
+                            appearanceMenu(item)
                         }
                         .accessibilityLabel("\(host), from SSH config, \(model.state(of: key) == .connected ? "connected" : "not connected")")
                     }
@@ -235,7 +309,11 @@ struct SidebarView: View {
                 Section("Synclets") {
                     ForEach(model.synclets) { s in
                         Button { model.onOpenSynclet(s) } label: {
-                            Label(s.name, systemImage: "arrow.triangle.2.circlepath")
+                            Label {
+                                Text(s.name)
+                            } icon: {
+                                lookIcon(model.syncletItem(s))
+                            }
                                 .lineLimit(1)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
@@ -244,6 +322,8 @@ struct SidebarView: View {
                         .help("\(s.leftPath) ↔ \(s.rightPath)")
                         .contextMenu {
                             Button("Open") { model.onOpenSynclet(s) }
+                            appearanceMenu(model.syncletItem(s))
+                            Divider()
                             Button("Delete", role: .destructive) { model.onDeleteSynclet(s) }
                         }
                     }
@@ -253,13 +333,22 @@ struct SidebarView: View {
             Section("Mac Favorites") {
                 ForEach(model.places) { place in
                     Button { model.onOpenPlace(place) } label: {
-                        Label(place.title, systemImage: place.symbol)
+                        Label {
+                            Text(place.title)
+                        } icon: {
+                            lookIcon(model.placeItem(place))
+                        }
                             .lineLimit(1)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .help(place.path)
+                    .contextMenu {
+                        Button("Open") { model.onOpenPlace(place) }
+                        Divider()
+                        appearanceMenu(model.placeItem(place))
+                    }
                 }
             }
 
@@ -270,13 +359,24 @@ struct SidebarView: View {
                             Label {
                                 Text(tag.name).lineLimit(1)
                             } icon: {
-                                TagDot(colour: tag.nsColor)
+                                let item = model.tagItem(tag)
+                                if model.appearances[item.key] == nil {
+                                    TagDot(colour: tag.nsColor)
+                                } else {
+                                    Image(systemName: model.symbol(item.key, standard: item.standardIcon))
+                                        .foregroundStyle(model.ownColour(item.key)?.color ?? tag.nsColor.map { Color(nsColor: $0) } ?? Tokens.Colors.textMuted)
+                                }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .help("Everything tagged “\(tag.name)”")
+                        .contextMenu {
+                            Button("Open") { model.onOpenTag(tag) }
+                            Divider()
+                            appearanceMenu(model.tagItem(tag))
+                        }
                         .accessibilityLabel("Tag \(tag.name)")
                     }
                 }

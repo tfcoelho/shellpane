@@ -4,7 +4,7 @@
 
 enum Migrations {
     /// Applied in order; PRAGMA user_version records how many have run.
-    static let all: [String] = [v1, v2, v3]
+    static let all: [String] = [v1, v2, v3, v4, v5]
 
     static let v1 = #"""
 -- Shellpane local database (system SQLite, no ORM). Migration v1.
@@ -178,6 +178,28 @@ CREATE INDEX bookmarks_order_idx ON bookmarks (sort_order);
 -- form's picker). NULL is the default server icon, so servers saved before this keep looking as they did.
 ALTER TABLE favorites ADD COLUMN icon TEXT
   CHECK (icon IS NULL OR (length(icon) BETWEEN 1 AND 64 AND icon NOT GLOB '*[^a-z0-9.]*'));
+
+"""#  // Swift drops the newline right before the closing delimiter; the blank line above keeps the file's last newline
+
+    static let v4 = #"""
+-- Migration v4: a favorite folder can have its own icon and colour, as a server does. NULL means the default:
+-- a folder icon in its server's colour, so folders saved before this keep looking as they did.
+ALTER TABLE bookmarks ADD COLUMN icon TEXT
+  CHECK (icon IS NULL OR (length(icon) BETWEEN 1 AND 64 AND icon NOT GLOB '*[^a-z0-9.]*'));
+ALTER TABLE bookmarks ADD COLUMN colour TEXT
+  CHECK (colour IS NULL OR (length(colour) BETWEEN 1 AND 16 AND colour NOT GLOB '*[^a-z]*'));
+
+"""#  // Swift drops the newline right before the closing delimiter; the blank line above keeps the file's last newline
+
+    static let v5 = #"""
+-- Migration v5: the icon and colour of anything else in the sidebar (~/.ssh/config hosts, Mac Favorites, synclets,
+-- groups, tags), by a key saying what it is. No row means its default look; only changes are stored.
+CREATE TABLE appearances (
+  key         TEXT PRIMARY KEY CHECK (length(key) BETWEEN 1 AND 1100),
+  icon        TEXT CHECK (icon IS NULL OR (length(icon) BETWEEN 1 AND 64 AND icon NOT GLOB '*[^a-z0-9.]*')),
+  colour      TEXT CHECK (colour IS NULL OR (length(colour) BETWEEN 1 AND 16 AND colour NOT GLOB '*[^a-z]*')),
+  updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
+);
 
 """#  // Swift drops the newline right before the closing delimiter; the blank line above keeps the file's last newline
 }

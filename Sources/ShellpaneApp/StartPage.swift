@@ -41,7 +41,7 @@ struct StartPage: View {
                             }
                         }
                         ForEach(model.unsavedHosts, id: \.self) { host in
-                            tile(host) { model.onOpenHost(host) } icon: { symbol("terminal") }
+                            tile(host) { model.onOpenHost(host) } icon: { symbol(model.hostItem(host)) }
                         }
                         tile("Add Server…") { model.onAddServer() } icon: { symbol("plus") }
                     }
@@ -49,7 +49,13 @@ struct StartPage: View {
                         section("Favorite Folders") {
                             ForEach(model.bookmarks) { b in
                                 tile(b.name) { model.onOpenBookmark(b) } icon: {
-                                    Image(nsImage: PaneViewController.folderIcon(size: 38))
+                                    if b.icon == nil && b.colour == nil {
+                                        Image(nsImage: PaneViewController.folderIcon(size: 38))
+                                    } else {
+                                        Image(systemName: FolderIcons.symbol(for: b))
+                                            .font(.system(size: 28))
+                                            .foregroundStyle(model.placeColour(b) ?? Tokens.Colors.textMuted)
+                                    }
                                 }
                                 .help(model.placeName(b).map { "\($0): \(b.path)" } ?? b.path)
                             }
@@ -58,7 +64,7 @@ struct StartPage: View {
                     if !model.places.isEmpty {
                         section("This Mac") {
                             ForEach(model.places) { place in
-                                tile(place.title) { model.onOpenPlace(place) } icon: { symbol(place.symbol) }
+                                tile(place.title) { model.onOpenPlace(place) } icon: { symbol(model.placeItem(place)) }
                             }
                         }
                     }
@@ -117,10 +123,14 @@ struct StartPage: View {
         }
     }
 
-    private func symbol(_ name: String) -> some View {
+    private func symbol(_ item: AppearanceItem) -> some View {
+        symbol(model.symbol(item.key, standard: item.standardIcon), colour: model.ownColour(item.key)?.color)
+    }
+
+    private func symbol(_ name: String, colour: Color? = nil) -> some View {
         Image(systemName: name)
             .font(.system(size: 22))
-            .foregroundStyle(Tokens.Colors.textMuted)
+            .foregroundStyle(colour ?? Tokens.Colors.textMuted)
             .frame(width: 38, height: 38)
             .background(Tokens.Colors.surfaceRaised, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
             .overlay(RoundedRectangle(cornerRadius: Tokens.Radius.md).strokeBorder(Tokens.Colors.border))

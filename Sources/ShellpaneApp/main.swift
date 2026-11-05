@@ -349,6 +349,10 @@ enum Snapshot {
                 controller.showServerForm(.connect)
             } else if sheet.hasPrefix("edit:"), let fav = controller.sidebarModel.favorites.first(where: { $0.name == String(sheet.dropFirst(5)) }) {
                 controller.showServerForm(.edit(fav))
+            } else if sheet.hasPrefix("folder:"), let b = controller.sidebarModel.bookmarks.first(where: { $0.name == String(sheet.dropFirst(7)) }) {
+                controller.showBookmarkForm(b)
+            } else if sheet.hasPrefix("host:") {
+                controller.showAppearanceForm(controller.sidebarModel.hostItem(String(sheet.dropFirst(5))))
             }
         }
         Task { @MainActor in

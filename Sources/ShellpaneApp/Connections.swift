@@ -15,6 +15,7 @@ final class ConnectionManager {
     let synclets: SyncletsStore
     let groups: GroupsStore
     let bookmarks: BookmarksStore
+    let appearances: AppearancesStore
     let log: OperationLog
     let secrets: SecretStore
     /// Set when the database couldn't be opened; favorites then live in memory for this run.
@@ -56,6 +57,7 @@ final class ConnectionManager {
         synclets = SyncletsStore(database: db)
         groups = GroupsStore(database: db)
         bookmarks = BookmarksStore(database: db)
+        appearances = AppearancesStore(database: db)
         log = OperationLog(database: db)
         log.prune(olderThanDays: 30)
     }

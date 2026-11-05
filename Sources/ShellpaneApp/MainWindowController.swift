@@ -103,7 +103,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         sidebarModel.onOpenHost = { [weak self] host in
             self?.connect(to: SSHTarget(host: host), key: "alias:" + host)
         }
-        sidebarModel.onSaveHost = { [weak self] host in self?.showServerForm(.connect, prefillAlias: host) }
+        sidebarModel.onSaveHost = { [weak self] host in
+            guard let self else { return }
+            self.showServerForm(.connect, prefillAlias: host)
+            // A look chosen for the host comes along when it's saved as a server.
+            let key = AppearanceKey.host(host)
+            if let icon = self.sidebarModel.appearances[key]?.icon { self.formModel?.icon = icon }
+            if let colour = self.sidebarModel.ownColour(key) { self.formModel?.colour = colour }
+        }
         sidebarModel.onOpenPlace = { [weak self] place in
             guard let self else { return }
             self.ensureActivePane().navigate(to: .local(place.path))
@@ -136,10 +143,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         }
         sidebarModel.onDeleteGroup = { [weak self] g in
             try? ConnectionManager.shared.groups.delete(g.id)  // its servers stay, ungrouped
+            try? ConnectionManager.shared.appearances.remove(AppearanceKey.group(g.id))
+            self?.sidebarModel.reloadAppearances()
             self?.sidebarModel.reloadFavorites()
         }
         sidebarModel.onDeleteSynclet = { [weak self] s in
             try? ConnectionManager.shared.synclets.delete(id: s.id)
+            try? ConnectionManager.shared.appearances.remove(AppearanceKey.synclet(s.id))
+            self?.sidebarModel.reloadAppearances()
             self?.sidebarModel.reloadSynclets()
         }
         sidebarModel.reloadSynclets()
@@ -151,12 +162,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
             MainActor.assumeIsolated { self?.sidebarModel.reloadMac() }
         }
         sidebarModel.onOpenBookmark = { [weak self] b in self?.openBookmark(b) }
-        sidebarModel.onRenameBookmark = { [weak self] b in
-            self?.askName(title: "Rename Favorite Folder", info: b.path, initial: b.name) { name in
-                try? ConnectionManager.shared.bookmarks.rename(b.id, to: name)
-                self?.bookmarksChanged()
-            }
-        }
+        sidebarModel.reloadAppearances()
+        sidebarModel.onEditAppearance = { [weak self] item in self?.showAppearanceForm(item) }
+        sidebarModel.onEditBookmark = { [weak self] b in self?.showBookmarkForm(b) }
         sidebarModel.onDeleteBookmark = { [weak self] b in
             try? ConnectionManager.shared.bookmarks.delete(b.id)   // only the shortcut: the folder itself is untouched
             self?.bookmarksChanged()
@@ -269,7 +277,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         let fav = sidebarModel.favorites.first { $0.id == openedAs }
             ?? sidebarModel.favorites.first { $0.id == session.key }
             ?? sidebarModel.favorites.first { $0.target == session.target }
-        guard let fav else { return (nil, session.colour) }
+        guard let fav else {
+            // A ~/.ssh/config host keeps the look chosen for it in the sidebar.
+            let key = openedAs ?? session.key
+            guard key.hasPrefix("alias:") else { return (nil, session.colour) }
+            let look = AppearanceKey.host(String(key.dropFirst("alias:".count)))
+            return (sidebarModel.appearances[look]?.icon, sidebarModel.ownColour(look) ?? session.colour)
+        }
         return (fav.icon, fav.colour.flatMap(ConnectionColour.init(rawValue:)) ?? session.colour)
     }
 
@@ -313,6 +327,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
 
     func bookmarksChanged() {
         sidebarModel.reloadBookmarks()
+        sidebarModel.reloadAppearances()
         panes.forEach { $0.refreshChrome() }
     }
 
@@ -340,21 +355,54 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         pane(active, setBookmarked: !pane(active, isBookmarked: active.location.path), path: active.location.path)
     }
 
-    private func askName(title: String, info: String, initial: String, done: @escaping (String) -> Void) {
-        guard let window else { return }
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = info
-        let field = NSTextField(string: initial)
-        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Rename")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-        alert.beginSheetModal(for: window) { response in
-            let name = field.stringValue.trimmingCharacters(in: .whitespaces)
-            if response == .alertFirstButtonReturn, !name.isEmpty { done(name) }
+    /// The sheet that edits a favorite folder's name, icon and colour.
+    func showBookmarkForm(_ b: Bookmark) {
+        let model = AppearanceFormModel(title: "Edit Favorite Folder", subtitle: b.path, name: b.name, icon: b.icon, colour: b.colour,
+                                        standardIcon: FolderIcons.standard(for: b.place), icons: FolderIcons.all,
+                                        automaticColour: sidebarModel.automaticColour(b),
+                                        automaticHelp: b.place == .local ? "Automatic: no colour" : "Automatic: its server's colour",
+                                        footer: "How it looks in the sidebar and on the start page.")
+        present(model) { [weak model] in
+            guard let model else { return }
+            try ConnectionManager.shared.bookmarks.update(b.id, name: model.name, icon: model.storedIcon, colour: model.storedColour)
         }
+    }
+
+    /// The same sheet for anything else in the sidebar: just its look.
+    func showAppearanceForm(_ item: AppearanceItem) {
+        let saved = sidebarModel.appearances[item.key]
+        let model = AppearanceFormModel(title: "Edit Appearance", subtitle: item.subtitle.isEmpty ? item.title : "\(item.title): \(item.subtitle)",
+                                        icon: saved?.icon, colour: saved?.colour, standardIcon: item.standardIcon, icons: item.icons,
+                                        automaticHelp: item.automaticHelp, footer: item.footer)
+        present(model) { [weak model] in
+            guard let model else { return }
+            try ConnectionManager.shared.appearances.set(item.key, Appearance(icon: model.storedIcon, colour: model.storedColour))
+        }
+    }
+
+    private func present(_ model: AppearanceFormModel, save: @escaping () throws -> Void) {
+        guard let window, appearanceSheet == nil else { return }
+        appearanceFormModel = model
+        let sheet = NSWindow(contentViewController: NSHostingController(rootView: AppearanceFormView(model: model)))
+        appearanceSheet = sheet
+        let close = { [weak self, weak window] in
+            if let sheet = self?.appearanceSheet { window?.endSheet(sheet) }
+            self?.appearanceSheet = nil
+            self?.appearanceFormModel = nil
+        }
+        model.onCancel = close
+        model.onSave = { [weak self] in
+            guard let self else { return }
+            do {
+                try save()
+            } catch {
+                self.showProblemOn(sheet, title: "Couldn't save it", message: error.localizedDescription)
+                return
+            }
+            close()
+            self.bookmarksChanged()
+        }
+        window.beginSheet(sheet)
     }
 
     func folderChanged(_ folder: String, identity: String) {
@@ -370,6 +418,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
     }
 
     private(set) var formSheet: NSWindow?
+    private var appearanceSheet: NSWindow?
+    /// The open appearance sheet's model (the self-test fills it in).
+    private(set) var appearanceFormModel: AppearanceFormModel?
     /// The open server form's model (the self-test and the video's state capture fill it in).
     private(set) var formModel: ServerFormModel?
 

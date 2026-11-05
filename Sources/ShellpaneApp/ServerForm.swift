@@ -201,47 +201,7 @@ struct ServerFormView: View {
 
     private var appearanceSection: some View {
         Section {
-            LabeledContent("Colour") {
-                HStack(spacing: Tokens.Space.s8) {
-                    ForEach(ConnectionColour.allCases.filter { $0 != .none }, id: \.self) { c in
-                        Button { model.colour = c } label: {
-                            ZStack {
-                                Circle().fill(c.color).frame(width: 16, height: 16)
-                                if model.colour == c {
-                                    Circle().strokeBorder(Tokens.Colors.text, lineWidth: 2).frame(width: 22, height: 22)
-                                }
-                            }
-                            .frame(width: 24, height: 24)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help(c.rawValue.capitalized)
-                        .accessibilityLabel(c.rawValue.capitalized)
-                        .accessibilityAddTraits(model.colour == c ? .isSelected : [])
-                    }
-                }
-            }
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(34), spacing: Tokens.Space.s8), count: 8),
-                      spacing: Tokens.Space.s8) {
-                ForEach(ServerIcons.all, id: \.self) { name in
-                    Button { model.icon = name } label: {
-                        // Line icons as in Finder; the chosen one in its colour with a thin ring, no fill.
-                        let chosen = model.icon == name
-                        Image(systemName: name)
-                            .font(.system(size: 16, weight: .regular))
-                            .foregroundStyle(chosen ? model.colour.color : Tokens.Colors.textMuted)
-                            .frame(width: 32, height: 32)
-                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(chosen ? model.colour.color : .clear, lineWidth: 1.5))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(name.replacingOccurrences(of: ".", with: " "))
-                    .accessibilityAddTraits(model.icon == name ? .isSelected : [])
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, Tokens.Space.s4)
+            AppearancePicker(colour: $model.colour, icon: $model.icon, icons: ServerIcons.all)
         } header: {
             Text("Appearance")
         } footer: {

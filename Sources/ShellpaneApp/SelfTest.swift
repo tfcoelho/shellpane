@@ -922,6 +922,61 @@ enum SelfTest {
             _ = await waitUntil { !left.isReloading }
             c.paneDidBecomeActive(right)
         }
+        // F01-H20 a favorite folder's own name, icon and colour, from its edit sheet
+        if let bookmark {
+            c.showBookmarkForm(bookmark)
+            check("F01-H20 Edit… opens the sheet with the folder as it is", c.appearanceFormModel?.name == bookmark.name && c.appearanceFormModel?.colour == ConnectionColour.none)
+            c.appearanceFormModel?.name = "Releases"
+            c.appearanceFormModel?.icon = "shippingbox"
+            c.appearanceFormModel?.colour = .green
+            c.appearanceFormModel?.onSave()
+            let edited = c.sidebarModel.bookmarks.first { $0.id == bookmark.id }
+            check("F01-H20 saving keeps the name, icon and colour", edited?.name == "Releases" && edited?.icon == "shippingbox" && edited?.colour == "green",
+                  "\(String(describing: edited))")
+            check("F01-H20 the sheet closes", c.appearanceFormModel == nil && NSApp.windows.allSatisfy { $0.attachedSheet == nil })
+            if let edited {
+                check("F01-H20 the sidebar draws its own icon and colour", FolderIcons.symbol(for: edited) == "shippingbox" && c.sidebarModel.placeColour(edited) != nil)
+                c.showBookmarkForm(edited)
+                c.appearanceFormModel?.colour = ConnectionColour.none
+                c.appearanceFormModel?.onSave()
+                let automatic = c.sidebarModel.bookmarks.first { $0.id == bookmark.id }
+                check("F01-H20 Automatic goes back to no colour of its own, keeping the icon", automatic?.colour == nil && automatic?.icon == "shippingbox")
+            }
+        }
+        // F01-H21 the look of anything else in the sidebar: a ~/.ssh/config host here
+        let hostItem = c.sidebarModel.hostItem("look-host")
+        check("F01-H21 a config host starts with its own default look", c.sidebarModel.symbol(hostItem.key, standard: hostItem.standardIcon) == "terminal" && c.sidebarModel.ownColour(hostItem.key) == nil)
+        c.showAppearanceForm(hostItem)
+        c.appearanceFormModel?.icon = "flask"
+        c.appearanceFormModel?.colour = .purple
+        c.appearanceFormModel?.onSave()
+        check("F01-H21 its icon and colour can be changed", c.sidebarModel.symbol(hostItem.key, standard: hostItem.standardIcon) == "flask" && c.sidebarModel.ownColour(hostItem.key) == .purple)
+        check("F01-H21 the sheet closes", c.appearanceFormModel == nil && NSApp.windows.allSatisfy { $0.attachedSheet == nil })
+        if let session = right.location.session {
+            let look = c.appearance(of: session, openedAs: "alias:look-host")
+            if c.sidebarModel.favorites.contains(where: { $0.target == session.target }) {
+                check("F01-H21 (a saved server's look wins over the host's)", true)
+            } else {
+                check("F01-H21 the path bar follows the host's look", look.icon == "flask" && look.colour == .purple, "\(look)")
+            }
+        }
+        c.showAppearanceForm(hostItem)
+        c.appearanceFormModel?.colour = ConnectionColour.none
+        c.appearanceFormModel?.onSave()
+        check("F01-H21 Automatic clears the colour and keeps the icon", c.sidebarModel.ownColour(hostItem.key) == nil && c.sidebarModel.symbol(hostItem.key, standard: "terminal") == "flask")
+        c.showAppearanceForm(hostItem)
+        c.appearanceFormModel?.icon = hostItem.standardIcon
+        c.appearanceFormModel?.onSave()
+        check("F01-H21 back to its defaults, nothing is kept", c.sidebarModel.appearances[hostItem.key] == nil)
+        let place = SidebarModel.Place(id: "/tmp", title: "Temp", symbol: "folder", path: "/tmp")
+        let placeItem = c.sidebarModel.placeItem(place)
+        c.showAppearanceForm(placeItem)
+        c.appearanceFormModel?.colour = .teal
+        c.appearanceFormModel?.onSave()
+        check("F01-H21 a Mac Favorite can have a colour", c.sidebarModel.ownColour(placeItem.key) == .teal)
+        c.showAppearanceForm(placeItem)
+        c.appearanceFormModel?.colour = ConnectionColour.none
+        c.appearanceFormModel?.onSave()
         c.pane(right, setBookmarked: false, path: r("releases"))
         check("F01-H6 removing it takes it out of the sidebar", !c.sidebarModel.bookmarks.contains { $0.path == r("releases") })
         right.navigate(to: right.location.with(path: remoteRoot))

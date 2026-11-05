@@ -21,6 +21,12 @@ func tempDBPath() -> String {
         let v3 = schema.deletingLastPathComponent().appendingPathComponent("migrations/v3.sql")
         #expect(try String(contentsOf: v3, encoding: .utf8) == Migrations.v3,
                 "Run python3 scripts/embed_migrations.py after editing db/migrations/v3.sql")
+        let v4 = schema.deletingLastPathComponent().appendingPathComponent("migrations/v4.sql")
+        #expect(try String(contentsOf: v4, encoding: .utf8) == Migrations.v4,
+                "Run python3 scripts/embed_migrations.py after editing db/migrations/v4.sql")
+        let v5 = schema.deletingLastPathComponent().appendingPathComponent("migrations/v5.sql")
+        #expect(try String(contentsOf: v5, encoding: .utf8) == Migrations.v5,
+                "Run python3 scripts/embed_migrations.py after editing db/migrations/v5.sql")
     }
 
     @Test func aVersionOneDatabaseUpgradesAndKeepsItsServers() throws {
@@ -43,7 +49,7 @@ func tempDBPath() -> String {
         let db = try Database(path: ":memory:")
         let tables = try db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
             .compactMap { $0["name"]?.string }
-        #expect(tables == ["bookmarks", "edit_sessions", "favorite_groups", "favorites", "log_entries", "settings", "synclets", "transfer_jobs"])
+        #expect(tables == ["appearances", "bookmarks", "edit_sessions", "favorite_groups", "favorites", "log_entries", "settings", "synclets", "transfer_jobs"])
         #expect(db.schemaVersion == Migrations.all.count)
         #expect(try db.query("SELECT value FROM settings WHERE key = 'default_conflict_rule'").first?["value"] == .text("\"ask\""))
     }
@@ -455,7 +461,50 @@ func tempDBPath() -> String {
     }
 }
 
+@Suite struct AppearanceTests {
+    @Test func aLookIsKeptByKeyAndGoesAwayAtTheDefault() throws {
+        let store = AppearancesStore(database: try Database(path: ":memory:"))
+        let key = AppearanceKey.host("web-1")
+        #expect(try store.all().isEmpty)
+        try store.set(key, Appearance(icon: "flask", colour: "purple"))
+        #expect(try store.all()[key] == Appearance(icon: "flask", colour: "purple"))
+        try store.set(key, Appearance(icon: "flask"))
+        #expect(try store.all()[key] == Appearance(icon: "flask"))
+        try store.set(key, Appearance())
+        #expect(try store.all()[key] == nil)
+    }
+
+    @Test func kindsDontCollide() {
+        #expect(AppearanceKey.host("a") != AppearanceKey.place("a"))
+        #expect(AppearanceKey.group("a") != AppearanceKey.tag("a"))
+    }
+}
+
 @Suite struct BookmarkTests {
+    @Test func aFolderKeepsItsOwnLookAndCanGoBackToTheDefault() throws {
+        let store = BookmarksStore(database: try Database(path: ":memory:"))
+        let b = try store.add(place: .local, path: "/srv/shop")
+        #expect(b.icon == nil && b.colour == nil)
+        try store.update(b.id, name: "Shop", icon: "cart", colour: "green")
+        var saved = try store.find(place: .local, path: "/srv/shop")
+        #expect(saved?.name == "Shop" && saved?.icon == "cart" && saved?.colour == "green")
+        try store.update(b.id, name: "Shop", icon: nil, colour: nil)
+        saved = try store.find(place: .local, path: "/srv/shop")
+        #expect(saved?.icon == nil && saved?.colour == nil)
+        #expect(throws: (any Error).self) { try store.update(b.id, name: "  ", icon: nil, colour: nil) }
+    }
+
+    @Test func foldersSavedBeforeAppearancesLookAsTheyDid() throws {
+        let path = tempDBPath()
+        defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+        do {
+            let old = try Database(path: path, migrations: [Migrations.v1, Migrations.v2, Migrations.v3])
+            try old.execute("INSERT INTO bookmarks (id, name, path, sort_order) VALUES ('b', 'Logs', '/var/log', 1)")
+        }
+        let folder = try BookmarksStore(database: try Database(path: path)).all().first
+        #expect(folder?.name == "Logs" && folder?.icon == nil && folder?.colour == nil)
+    }
+
     @Test func foldersOnTheMacAndOnServersKeepTheirOrder() throws {
         let db = try Database(path: ":memory:")
         let web = Favorite(name: "Web", host: "example.com")
