@@ -1,4 +1,5 @@
 import AppKit
+import ShellpaneCore
 import ShellpaneUI
 import SFTPKit
 import SwiftUI
@@ -24,6 +25,12 @@ protocol PaneDelegate: AnyObject {
     /// How a connection is shown: the saved server's icon and colour, as they are now. `openedAs` is the
     /// server this pane was opened through, since two saved servers on one host share a connection.
     func appearance(of session: RemoteSession, openedAs: String?) -> (icon: String?, colour: ConnectionColour)
+    /// What a pane with nothing open yet shows.
+    func startPage(for pane: PaneViewController) -> AnyView
+    func paneRequestsClose(_ pane: PaneViewController)
+    func pane(_ pane: PaneViewController, requestsSplit edge: PaneLayout.Edge)
+    /// The pane, or one of its tabs, is being dragged somewhere.
+    func paneDragged(_ pane: PaneViewController, tab: Int?, phase: PaneDragPhase)
 }
 
 /// Keyboard: ⌘↓ or double-click opens, ⌘↑ goes up, Return renames (as in Finder), ⌘⌫ deletes,
@@ -208,7 +215,7 @@ final class CursorRowView: NSTableRowView {
 @MainActor
 final class PaneViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     weak var delegate: PaneDelegate?
-    let paneID = UUID()
+    let paneID: UUID
     /// What's being dragged out of this pane right now.
     var draggedEntries: [FileEntry] = []
     /// NSFilePromiseProvider holds its delegate weakly; these live until the drag ends.
@@ -218,7 +225,16 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
     private var forwardStack: [Location] = []
     private let activeMarker = NSView()
     /// The pane that F5, ⌘V and the toolbar act on. Shown by an accent line under its path bar.
-    var isActive = false { didSet { activeMarker.isHidden = !isActive } }
+    var isActive = false {
+        didSet {
+            activeMarker.isHidden = !isActive
+            if isActive { view.window?.title = windowTitle }
+        }
+    }
+    private var windowTitle: String {
+        if showsStart { return "New Pane" }
+        return tag?.name ?? ((location.path as NSString).lastPathComponent.isEmpty ? "/" : (location.path as NSString).lastPathComponent)
+    }
     var canGoBack: Bool { !backStack.isEmpty }
     var canGoForward: Bool { !forwardStack.isEmpty }
     private var flashMessage: String?
@@ -321,8 +337,9 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
         return f
     }()
 
-    init(location: Location) {
+    init(location: Location, id: UUID = UUID()) {
         self.location = location
+        paneID = id
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -331,9 +348,45 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
     var isRemote: Bool { location.session != nil }
 
     var selectedEntries: [FileEntry] {
+        if showsStart { return [] }
         if viewMode == .columns { return columns.selectedEntries }
         if viewMode == .icons { return icons.selectedEntries }
         return tableView.selectedRowIndexes.compactMap { $0 < entries.count ? entries[$0] : nil }
+    }
+
+    // MARK: - Start page
+
+    /// Nothing open yet: favourites to choose from, over the (hidden) list.
+    private(set) var showsStart = false
+    private let startHost = StartHostingView(rootView: AnyView(EmptyView()))
+    /// Restored after a relaunch: where this pane was on a server. A click reconnects; nothing logs in on its own.
+    var resume: StartPage.Resume?
+
+    func setShowsStart(_ on: Bool) {
+        guard showsStart != on else { return }
+        showsStart = on
+        startHost.isHidden = !on
+        if on { startHost.rootView = delegate?.startPage(for: self) ?? AnyView(EmptyView()) } else { resume = nil }
+        if isActive { view.window?.title = windowTitle }
+    }
+
+    func refreshStartPage() {
+        if showsStart { startHost.rootView = delegate?.startPage(for: self) ?? AnyView(EmptyView()) }
+    }
+
+    /// What gets the keyboard when this pane does.
+    var focusView: NSView {
+        if showsStart { return startHost }
+        switch viewMode {
+        case .list: return tableView
+        case .icons: return icons.collection
+        case .columns: return columns.browser
+        }
+    }
+
+    /// Tab moves to `next` from anything in this pane that can have the keyboard.
+    func setNextKeyView(_ next: NSView) {
+        for v in [tableView, icons.collection, startHost] as [NSView] { v.nextKeyView = next }
     }
 
     enum ViewMode: String { case list, icons, columns }
@@ -414,7 +467,9 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
         pathField.delegate = self
         pathField.placeholderString = "Type a path: /var/www, ~/logs, .."
         pathField.setAccessibilityLabel("Go to path")
-        for v in [tabHost, pathHost, scrollView, columns.browser, icons.scrollView, statusHost, overlayHost, activeMarker, filterField, pathField] as [NSView] {
+        startHost.isHidden = true
+        startHost.onFocus = { [weak self] in self.map { $0.delegate?.paneDidBecomeActive($0) } }
+        for v in [tabHost, pathHost, scrollView, columns.browser, icons.scrollView, statusHost, overlayHost, startHost, activeMarker, filterField, pathField] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
         }
@@ -434,7 +489,7 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
 
             pathFieldLeading,
             // Stops short of the ☆ and copy buttons, which stay usable while typing.
-            pathField.trailingAnchor.constraint(equalTo: pathHost.trailingAnchor, constant: -56),
+            pathField.trailingAnchor.constraint(equalTo: pathHost.trailingAnchor, constant: -78),
             pathField.centerYAnchor.constraint(equalTo: pathHost.centerYAnchor),
             filterField.topAnchor.constraint(equalTo: pathHost.bottomAnchor, constant: Tokens.Space.s2),
             filterField.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Tokens.Space.s8),
@@ -463,7 +518,12 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
             overlayHost.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
             overlayHost.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
             overlayHost.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+            startHost.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor),
+            startHost.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            startHost.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            startHost.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             root.widthAnchor.constraint(greaterThanOrEqualToConstant: Tokens.Size.paneMinWidth),
+            root.heightAnchor.constraint(greaterThanOrEqualToConstant: Tokens.Size.paneMinHeight),
         ])
         let fh = filterField.heightAnchor.constraint(equalToConstant: 0)
         fh.isActive = true
@@ -533,6 +593,7 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
     /// Goes somewhere. Records history unless it's a Back/Forward step itself.
     func navigate(to newLocation: Location, recordHistory: Bool = true) {
         tag = nil
+        setShowsStart(false)
         if newLocation.session == nil { openedAs = nil }
         if recordHistory, !Self.same(location, newLocation) {
             backStack.append(location)
@@ -610,7 +671,7 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
         navigate(to: tab.location, recordHistory: false)
     }
 
-    /// ⌘W: closes this tab. Returns false when it's the last one (the window closes instead).
+    /// ⌘W: closes this tab. Returns false when it's the last one (the pane closes instead).
     @discardableResult
     func closeTab(_ index: Int? = nil) -> Bool {
         let i = index ?? currentTab
@@ -628,6 +689,41 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
         selectTab((currentTab + step + tabs.count) % tabs.count)
     }
 
+    /// Every tab as it is now, for handing them to another pane.
+    func currentTabs() -> [Tab] {
+        saveCurrentTab()
+        return tabs
+    }
+
+    /// Takes a tab out to go elsewhere. Only when another stays behind.
+    func removeTab(at index: Int) -> Tab? {
+        saveCurrentTab()
+        guard tabs.count > 1, tabs.indices.contains(index) else { return nil }
+        let tab = tabs[index]
+        closeTab(index)
+        return tab
+    }
+
+    /// A pane made from a tab keeps that tab's Back and Forward.
+    func restoreHistory(of tab: Tab) {
+        backStack = tab.back
+        forwardStack = tab.forward
+        saveCurrentTab()
+        delegate?.paneDidNavigate(self)
+    }
+
+    /// Tabs from another pane join this one, and the first of them comes to the front. A pane with
+    /// nothing open yet has no tab worth keeping.
+    func adopt(_ incoming: [Tab]) {
+        guard !incoming.isEmpty else { return }
+        saveCurrentTab()
+        if showsStart { tabs = [] }
+        let at = tabs.count
+        tabs += incoming
+        currentTab = -1
+        selectTab(at, save: false)
+    }
+
     private func refreshTabs() {
         saveCurrentTab()
         let shown = tabs.count > 1
@@ -640,7 +736,11 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
         tabHost.rootView = AnyView(TabStrip(items: items,
                                             onSelect: { [weak self] i in self?.selectTab(i) },
                                             onClose: { [weak self] i in self?.closeTab(i) },
-                                            onNew: { [weak self] in self?.newTab() }))
+                                            onNew: { [weak self] in self?.newTab() },
+                                            onDrag: { [weak self] i, phase in
+                                                guard let self else { return }
+                                                self.delegate?.paneDragged(self, tab: i, phase: phase)
+                                            }))
     }
 
     static func same(_ a: Location, _ b: Location) -> Bool {
@@ -867,6 +967,18 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
                     guard let self, self.location.session != nil else { return }
                     self.pathFieldLeading.constant = end + Tokens.Space.s4
                 }
+            },
+            onClose: { [weak self] in
+                guard let self else { return }
+                self.delegate?.paneRequestsClose(self)
+            },
+            onSplit: { [weak self] down in
+                guard let self else { return }
+                self.delegate?.pane(self, requestsSplit: down ? .bottom : .right)
+            },
+            onPaneDrag: { [weak self] phase in
+                guard let self else { return }
+                self.delegate?.paneDragged(self, tab: nil, phase: phase)
             }))
 
         let selected = selectedEntries
@@ -894,7 +1006,7 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
             trailing = ""
         }
         statusHost.rootView = AnyView(StatusBar(leading: leading, trailing: trailing, busy: isLoading || busyMessage != nil))
-        view.window?.title = tag?.name ?? ((location.path as NSString).lastPathComponent.isEmpty ? "/" : (location.path as NSString).lastPathComponent)
+        if isActive { view.window?.title = windowTitle }
     }
 
     // MARK: - Data
@@ -961,6 +1073,7 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
         if viewMode == .columns { viewMode = .list }
         location = .local(NSHomeDirectory())
         tag = t
+        setShowsStart(false)
         expanded = [:]
         allEntries = []
         entries = []
@@ -973,6 +1086,10 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
 
     /// For actions that put something in this pane's folder: a tag view has none. Says so, and returns false.
     func acceptsNewItems() -> Bool {
+        if showsStart {
+            NSSound.beep()
+            return false
+        }
         guard let tag else { return true }
         NSSound.beep()
         flash("This pane is showing the tag “\(tag.name)”. Open a folder to put things in it.")
@@ -1238,6 +1355,23 @@ final class PaneViewController: NSViewController, NSTableViewDataSource, NSTable
 final class OverlayHostingView: NSHostingView<AnyView> {
     override func hitTest(_ point: NSPoint) -> NSView? {
         isHidden ? nil : super.hitTest(point)
+    }
+}
+
+/// The start page in a pane: it can hold the keyboard, so Tab and the pane's active marker work as in a list.
+final class StartHostingView: NSHostingView<AnyView> {
+    var onFocus: () -> Void = {}
+    override var acceptsFirstResponder: Bool { !isHidden }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        isHidden ? nil : super.hitTest(point)
+    }
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok { onFocus() }
+        return ok
+    }
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 48 { window?.selectNextKeyView(nil) } else { super.keyDown(with: event) }
     }
 }
 

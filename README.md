@@ -10,7 +10,7 @@
   <img alt="Apple silicon and Intel" src="https://img.shields.io/badge/Apple%20silicon%20%2B%20Intel-supported-2ea44f?style=flat-square">
 </p>
 
-**The Mac file manager for people who live in SSH.** Two panes, your Mac on one side and your servers on the
+**The Mac file manager for people who live in SSH.** Up to six panes, your Mac on one side and your servers on the
 other. If `ssh yourserver` works in Terminal, it works in Shellpane: it runs your Mac's own `/usr/bin/ssh`,
 so your `~/.ssh/config`, keys, agent (1Password, Secretive…), jump hosts and `known_hosts` just work.
 
@@ -28,6 +28,8 @@ so your `~/.ssh/config`, keys, agent (1Password, Secretive…), jump hosts and `
   behave exactly as in Terminal. Opened from the Dock, it still reads `SSH_AUTH_SOCK` from your login shell.
 - **An organised sidebar.** Servers with their own icon and colour, in groups; favourite folders, on your Mac
   or on a server; your Finder Favorites and tags.
+- **Arrange it your way.** One window, up to six panes. Split with ⌘\ or ⇧⌘\, or drag a pane by its path bar to any
+  edge, like VS Code. Transfer dims the app and leaves lit the panes that can take the files: click one or press its number.
 - **Keyboard first.** Space marks files, F5 copies to the other pane, F6 moves, F4 edits on the server, `/`
   filters, → and ← open folders in place, ⌘L types a path, ⌘+ and ⌘- make files bigger or smaller.
 - **Errors you can act on.** ssh's own words, plus a button that copies the same login as `ssh -v`.

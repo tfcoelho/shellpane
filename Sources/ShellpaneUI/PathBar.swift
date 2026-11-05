@@ -1,9 +1,13 @@
 import SwiftUI
 
+/// A drag of a pane by its path bar or a tab: the window works out where it's going from the pointer.
+public enum PaneDragPhase: Sendable { case changed, ended }
+
 /// Where a pane is: optional host chip, then breadcrumb segments. Click a segment to go there.
 /// Click the empty part (or ⌘L / ⇧⌘G) to type a path: the pane puts its own text field over the bar,
 /// after the host chip.
-/// At the end: ☆ adds the folder to Favorite Folders, and the copy button copies its path.
+/// At the end: ☆ adds the folder to Favorite Folders, the copy button copies its path, × closes the pane.
+/// Drag the host chip or the empty part to move the pane.
 public struct PathBar: View {
     public struct Remote: Sendable {
         public var user: String
@@ -33,6 +37,10 @@ public struct PathBar: View {
     let onToggleBookmark: () -> Void
     /// Where the host chip ends, in the bar's coordinates: the pane starts its path field after it.
     let onChipEnd: (CGFloat) -> Void
+    let onClose: (() -> Void)?
+    /// New pane beside this one: to the right, or below when `down`.
+    let onSplit: ((_ down: Bool) -> Void)?
+    let onPaneDrag: ((PaneDragPhase) -> Void)?
 
     private static let space = "PathBar"
 
@@ -40,7 +48,8 @@ public struct PathBar: View {
                 tag: (name: String, colour: Color?)? = nil,
                 onNavigate: @escaping (String) -> Void = { _ in }, onEdit: @escaping () -> Void = {},
                 onCopy: @escaping (_ remoteForm: Bool) -> Void = { _ in }, onToggleBookmark: @escaping () -> Void = {},
-                onChipEnd: @escaping (CGFloat) -> Void = { _ in }) {
+                onChipEnd: @escaping (CGFloat) -> Void = { _ in }, onClose: (() -> Void)? = nil,
+                onSplit: ((_ down: Bool) -> Void)? = nil, onPaneDrag: ((PaneDragPhase) -> Void)? = nil) {
         self.remote = remote
         self.path = path
         self.isBookmarked = isBookmarked
@@ -51,6 +60,9 @@ public struct PathBar: View {
         self.onCopy = onCopy
         self.onToggleBookmark = onToggleBookmark
         self.onChipEnd = onChipEnd
+        self.onClose = onClose
+        self.onSplit = onSplit
+        self.onPaneDrag = onPaneDrag
     }
 
     /// "/var/www/site" -> [("/", "/"), ("var", "/var"), ("www", "/var/www"), ("site", "/var/www/site")]
@@ -87,6 +99,7 @@ public struct PathBar: View {
                                 .onAppear { onChipEnd(end) }
                                 .onChange(of: end) { _, x in onChipEnd(x) }
                         })
+                        .gesture(paneDrag)
                 }
                 Group {
                     if let tag {
@@ -104,11 +117,12 @@ public struct PathBar: View {
                 }
                 .layoutPriority(1)   // names get their room first, and shorten only when the pane is narrow
                 .opacity(isEditing ? 0 : 1)
-                Spacer(minLength: Tokens.Space.s8)
+                Spacer(minLength: 24)   // always room to grab the pane by
                     .frame(maxHeight: .infinity)
                     .contentShape(Rectangle())
                     .onTapGesture { onEdit() }
-                    .help("Click to type a path (⌘L)")
+                    .gesture(paneDrag)
+                    .help("Click to type a path (⌘L). Drag to move this pane.")
                 if tag == nil {
                 Button(action: onToggleBookmark) {
                     Image(systemName: isBookmarked ? "star.fill" : "star")
@@ -124,6 +138,14 @@ public struct PathBar: View {
                 .help(remote == nil ? "Copy the path" : "Copy the path (right-click for host:path)")
                 .accessibilityLabel("Copy this folder's path")
                 }
+                if let onClose {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Tokens.Colors.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Close this pane (⌘W)")
+                    .accessibilityLabel("Close this pane")
+                }
             }
             .contextMenu {
                 Button("Edit Path…") { onEdit() }
@@ -131,6 +153,12 @@ public struct PathBar: View {
                 if remote != nil { Button("Copy as host:path (for scp and rsync)") { onCopy(true) } }
                 Divider()
                 Button(isBookmarked ? "Remove from Favorite Folders" : "Add to Favorite Folders") { onToggleBookmark() }
+                if let onSplit {
+                    Divider()
+                    Button("New Pane on the Right") { onSplit(false) }
+                    Button("New Pane Below") { onSplit(true) }
+                }
+                if let onClose { Button("Close Pane") { onClose() } }
             }
             .padding(.horizontal, Tokens.Space.s8)
             .frame(height: Tokens.Size.pathBar - (remote == nil ? 0 : Tokens.Size.connectionBar))
@@ -139,16 +167,34 @@ public struct PathBar: View {
         .coordinateSpace(name: Self.space)
     }
 
+    private var paneDrag: some Gesture {
+        DragGesture(minimumDistance: 8)
+            .onChanged { _ in onPaneDrag?(.changed) }
+            .onEnded { _ in onPaneDrag?(.ended) }
+    }
+
+    /// The whole path if it fits; otherwise "…" and as many of the last folders as do, so a narrow pane
+    /// still says where it is instead of shortening every name.
     private var breadcrumbs: some View {
         let segs = Self.segments(of: path)
-        return HStack(spacing: Tokens.Space.s2) {
-            ForEach(Array(segs.enumerated()), id: \.offset) { index, seg in
-                if index > 0 {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Tokens.Colors.textMuted)
-                        .accessibilityHidden(true)
-                }
+        return ViewThatFits(in: .horizontal) {
+            crumbs(segs, firstShown: 0).fixedSize()
+            ForEach(Array(stride(from: 1, to: max(segs.count - 1, 1), by: 1)), id: \.self) { first in
+                crumbs(segs, firstShown: first).fixedSize()
+            }
+            crumbs(segs, firstShown: max(segs.count - 1, 0))
+        }
+        .help(path)
+    }
+
+    private func crumbs(_ segs: [(name: String, path: String)], firstShown: Int) -> some View {
+        HStack(spacing: Tokens.Space.s2) {
+            if firstShown > 0 {
+                Text(verbatim: "…").font(.callout).foregroundStyle(Tokens.Colors.textMuted).accessibilityHidden(true)
+                chevron
+            }
+            ForEach(Array(segs.enumerated().dropFirst(firstShown)), id: \.offset) { index, seg in
+                if index > firstShown { chevron }
                 Button(seg.name == "/" ? (remote == nil ? "Macintosh HD" : "/") : seg.name) {
                     onNavigate(seg.path)
                 }
@@ -159,5 +205,12 @@ public struct PathBar: View {
                 .accessibilityLabel("Go to \(seg.name)")
             }
         }
+    }
+
+    private var chevron: some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(Tokens.Colors.textMuted)
+            .accessibilityHidden(true)
     }
 }

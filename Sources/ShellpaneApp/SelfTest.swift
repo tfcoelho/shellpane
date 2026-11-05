@@ -1,6 +1,7 @@
 import AppKit
 import Quartz
 import ShellpaneCore
+import ShellpaneUI
 import SFTPKit
 import SSHProcess
 import TransferKit
@@ -251,12 +252,197 @@ enum SelfTest {
     static func run(_ c: MainWindowController) {
         Task { @MainActor in
             await runAll(c)
+            await runPanes(c)
             print("\nSELFTEST \(passed) passed, \(failed.count) failed" + (skipped.isEmpty ? "" : ", \(skipped.count) skipped")
                   + (failed.isEmpty ? "" : ": " + failed.joined(separator: ", ")))
             fflush(stdout)
             RemoteEditManager.shared.stopAll()
             ConnectionManager.shared.closeAll()
             exit(failed.isEmpty ? 0 : 1)
+        }
+    }
+
+    /// A key press straight to the destination picker, which is its own window.
+    private static func pickerKey(_ c: MainWindowController, code: UInt16, chars: String) {
+        guard let surface = c.picker?.surface,
+              let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                       windowNumber: 0, context: nil, characters: chars, charactersIgnoringModifiers: chars,
+                                       isARepeat: false, keyCode: code) else { return }
+        surface.keyDown(with: e)
+    }
+
+    /// F14: one window with up to six panes. Runs last, since it rearranges everything.
+    // swiftlint:disable:next function_body_length
+    static func runPanes(_ c: MainWindowController) async {
+        guard let localRoot = ProcessInfo.processInfo.environment["SHELLPANE_SELFTEST_LOCAL"] else { return }
+        let left = c.left, right = c.right
+        let scratch = NSTemporaryDirectory() + "shellpane-panes-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: scratch) }
+        left.navigate(to: .local(localRoot))
+        _ = await waitUntil { !left.entries.isEmpty }
+
+        // Splitting: a new pane beside the active one, on the start page
+        left.view.window?.makeFirstResponder(right.tableView)
+        keyThroughApp(code: 42, chars: "\\", mods: .command)                    // ⌘\
+        check("F14-H1 ⌘\\ adds a pane on the right, in reading order", c.panes.count == 3 && c.panes[0] === left && c.panes[1] === right, "\(c.panes.count) panes")
+        guard c.panes.count == 3 else { return }
+        let third = c.panes[2]
+        check("F14-H1 the new pane is active and shows the start page", c.activePane === third && third.showsStart)
+        check("F14-H1 a pane on the start page has nothing selected", third.selectedEntries.isEmpty)
+
+        // Dividers: they move, and stop at the minimum size
+        if let split = c.area.rootSplit {
+            split.moveDivider(0, to: 400)
+            check("F14-H2 a divider moves", abs(left.view.frame.width - 400) < 2, "\(left.view.frame.width)")
+            check("F14-H2 the layout remembers it", {
+                if case let .split(_, _, sizes)? = c.area.currentLayout() { return sizes[0] > sizes[1] }
+                return false
+            }())
+            split.moveDivider(0, to: 10)
+            check("F14-H2 a divider stops at the pane's minimum", left.view.frame.width >= Tokens.Size.paneMinWidth, "\(left.view.frame.width)")
+        } else {
+            check("F14-H2 the panes are in a split", false)
+        }
+
+        // The picker: F5 with several panes asks; a pane with nothing open can't be chosen
+        left.view.window?.makeFirstResponder(left.tableView)
+        let name = left.entries.first { !$0.isDirectory }?.name ?? ""
+        if let i = left.entries.firstIndex(where: { $0.name == name }) { left.tableView.selectRowIndexes([i], byExtendingSelection: false) }
+        let before = TransferCenter.shared.items.count
+        c.transfer(.copy)
+        check("F14-H3 with several panes, F5 shows the picker", c.picker?.isShown == true)
+        check("F14-H3 only panes that can take the files are offered", c.picker?.choices.map(\.paneID) == [right.paneID])
+        pickerKey(c, code: 53, chars: "\u{1b}")
+        check("F14-H3 Esc cancels and nothing is copied", c.picker == nil && TransferCenter.shared.items.count == before)
+
+        third.navigate(to: .local(scratch))
+        _ = await waitUntil { !third.isReloading }
+        c.transfer(.copy)
+        check("F14-H4 a pane with a folder open can be chosen", c.picker?.choices.count == 2)
+        pickerKey(c, code: 19, chars: "2")                                      // the second choice
+        check("F14-H4 pressing its number closes the picker", c.picker == nil)
+        let copied = await waitUntil(8) { FileManager.default.fileExists(atPath: scratch + "/" + name) }
+        check("F14-H4 the file lands in the chosen pane's folder", copied, "\(name) in \(scratch)")
+        c.hideActivity()
+        c.transfer(.copy)
+        let same = c.picker?.choices.count
+        pickerKey(c, code: 53, chars: "\u{1b}")
+        check("F14-H4 still both: the source's own folder isn't among them", same == 2)
+
+        // With exactly two panes F5 goes straight there, but the toolbar button still asks
+        c.closePane(third)
+        check("F14-H5 closing a pane leaves the other two", c.panes.count == 2 && c.panes[0] === left && c.panes[1] === right)
+        left.view.window?.makeFirstResponder(left.tableView)
+        if let i = left.entries.firstIndex(where: { $0.name == name }) { left.tableView.selectRowIndexes([i], byExtendingSelection: false) }
+        c.transferClicked(nil)
+        check("F14-H5 the toolbar button shows the picker with two panes", c.picker?.isShown == true && c.picker?.choices.count == 1)
+        pickerKey(c, code: 53, chars: "\u{1b}")
+
+        // Presets and the limit of four
+        c.apply(.twoOverOne)
+        check("F14-H6 Two on Top, One Below", c.panes.count == 3 && {
+            if case let .split(.column, children, _)? = c.layout, case .split(.row, _, _) = children[0] { return true }
+            return false
+        }())
+        let stackedTop = c.area.frame(of: c.panes[0]), stackedBottom = c.area.frame(of: c.panes[2])
+        check("F14-H6 the rows really share the height", abs((stackedTop.height + stackedBottom.height) / 2 - stackedBottom.height) < 40,
+              "\(stackedTop.height) / \(stackedBottom.height)")
+        c.apply(.fourInARow)
+        check("F14-H6 Four in a Row", c.panes.count == 4)
+        let widths = c.panes.map { c.area.frame(of: $0).width }
+        check("F14-H6 all four at least the minimum width", widths.allSatisfy { $0 >= Tokens.Size.paneMinWidth }, "\(widths)")
+        c.apply(.threeOverThree)
+        check("F14-H6 Grid of Six", c.panes.count == 6, "\(c.panes.count) panes")
+        let sixFrames = c.panes.map { c.area.frame(of: $0) }
+        check("F14-H6 all six at least their minimum size",
+              sixFrames.allSatisfy { $0.width >= Tokens.Size.paneMinWidth && $0.height >= Tokens.Size.paneMinHeight }, "\(sixFrames)")
+        c.split(.right)
+        check("F14-H6 a seventh pane is refused", c.panes.count == 6)
+
+        // Moving between panes by direction
+        left.view.window?.makeFirstResponder(left.tableView)
+        keyThroughApp(code: 124, chars: String(UnicodeScalar(NSRightArrowFunctionKey)!), mods: [.command, .option])
+        check("F14-H7 ⌥⌘→ goes to the pane on the right", c.activePane === c.panes[1])
+
+        // Dragging a pane: to the outer edge it spans the whole side
+        c.apply(.threeColumns)
+        let bounds = c.area.visibleBounds
+        c.beginDrag(c.panes[0], tab: nil)
+        c.updateDrag(at: NSPoint(x: bounds.midX, y: bounds.minY + 4))
+        check("F14-H8 near the bottom the drop target is that whole side", c.drag?.target == .outer(.bottom))
+        c.endDrag()
+        check("F14-H8 dropped there, it spans the bottom", {
+            if case let .split(.column, children, _)? = c.layout { return children.count == 2 && children[1] == .pane(left.paneID) }
+            return false
+        }())
+
+        // Beside a pane, on one edge
+        let dragged = c.panes[0]
+        let target = c.area.frame(of: c.panes[1])
+        c.beginDrag(dragged, tab: nil)
+        c.updateDrag(at: NSPoint(x: target.minX + 8, y: target.midY))
+        check("F14-H8 over a pane's left edge the drop target is that edge", c.drag?.target == .beside(c.panes[1].paneID, .left))
+        c.cancelDrag()
+        check("F14-H8 cancelling leaves everything as it was", c.drag == nil && c.panes[0] === dragged && dragged.view.alphaValue == 1)
+
+        // In the middle of a pane: its tabs join that pane
+        let into = c.panes[1], leaving = c.panes[0]
+        into.navigate(to: .local(localRoot))
+        leaving.navigate(to: .local(scratch))
+        let tabsBefore = into.tabs.count + leaving.tabs.count
+        let middle = c.area.frame(of: into)
+        c.beginDrag(leaving, tab: nil)
+        c.updateDrag(at: NSPoint(x: middle.midX, y: middle.midY))
+        check("F14-H9 over a pane's middle the drop target is to merge", c.drag?.target == .merge(into.paneID))
+        c.endDrag()
+        check("F14-H9 merging closes the pane and keeps its folder as a tab", c.panes.count == 2 && !c.panes.contains { $0 === leaving } && into.tabs.count == tabsBefore,
+              "\(c.panes.count) panes, \(into.tabs.count) tabs")
+
+        // A tab dragged to an edge becomes a pane of its own
+        let frame = c.area.frame(of: into)
+        c.beginDrag(into, tab: 0)
+        c.updateDrag(at: NSPoint(x: frame.midX, y: frame.minY + 8))
+        check("F14-H10 a tab can split its own pane", c.drag?.target == .beside(into.paneID, .bottom))
+        c.endDrag()
+        check("F14-H10 the tab is now a pane", c.panes.count == 3 && into.tabs.count == tabsBefore - 1, "\(c.panes.count) panes, \(into.tabs.count) tabs")
+        try? await Task.sleep(for: .milliseconds(300))
+
+        // Saving and coming back. A pane on a server offers to reconnect instead of logging in.
+        let saved = c.encodedPanes()
+        let paths = c.panes.map { $0.location.path }
+        let wasRemote = c.panes.map { $0.location.session != nil }
+        let shape = c.area.currentLayout()
+        c.panes.forEach(c.closePane)
+        check("F14-H11 with no panes the window shows the start page", c.panes.isEmpty && c.activePane == nil && c.area.showsStartPage)
+        check("F14-H11 with no panes the window stays open", c.window?.isVisible == true)
+        c.restorePanes(from: saved)
+        check("F14-H11 the same arrangement comes back", c.area.currentLayout() == shape)
+        check("F14-H11 folders on this Mac come back where they were",
+              zip(zip(c.panes, paths), wasRemote).allSatisfy { pair, remote in remote || pair.0.location.path == pair.1 }, "\(c.panes.map(\.location.path))")
+        check("F14-H11 panes that were on a server wait on the start page",
+              zip(c.panes, wasRemote).allSatisfy { pane, remote in !remote || pane.showsStart })
+
+        // Opening from the sidebar with no panes makes one
+        c.panes.forEach(c.closePane)
+        c.sidebarModel.onOpenPlace(.init(id: localRoot, title: "t", symbol: "folder", path: localRoot))
+        check("F14-H12 opening something with no panes makes one there", c.panes.count == 1 && c.panes[0].location.path == localRoot && !c.panes[0].showsStart)
+        c.closeTabOrWindow(nil)
+        check("F14-H12 ⌘W closes the last pane, not the window", c.panes.isEmpty && c.window?.isVisible == true)
+
+        // The Activity popover stays on the screen with the window against its edge, as in full screen
+        if let window = c.window, let screen = window.screen?.visibleFrame {
+            let home = window.frame
+            window.setFrameOrigin(NSPoint(x: screen.maxX - window.frame.width, y: window.frame.minY))
+            c.hideActivity()
+            _ = await waitUntil(2) { c.activityPopoverFrame == nil }             // showing is a toggle: let it finish closing
+            c.showActivity(nil)
+            try? await Task.sleep(for: .milliseconds(300))
+            let popover = c.activityPopoverFrame
+            check("F14-H13 Activity stays on the screen", popover.map { $0.maxX <= screen.maxX + 1 && $0.minX >= screen.minX - 1 } == true,
+                  "\(popover ?? .zero) on \(screen)")
+            c.hideActivity()
+            window.setFrame(home, display: true)
         }
     }
 

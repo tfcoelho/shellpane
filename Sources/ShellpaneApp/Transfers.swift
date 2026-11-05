@@ -286,6 +286,8 @@ struct TransferRowView: View {
 }
 
 struct ActivityView: View {
+    static let size = NSSize(width: 400, height: 380)
+
     @ObservedObject var center: TransferCenter
 
     var body: some View {
@@ -313,6 +315,6 @@ struct ActivityView: View {
                 }
             }
         }
-        .frame(width: 400, height: 380)
+        .frame(width: Self.size.width, height: Self.size.height)
     }
 }

@@ -8,6 +8,7 @@
 //                                   play the core flow and record it (scripts/demo-video.sh)
 
 import AppKit
+import ShellpaneCore
 import SSHProcess
 import SwiftUI
 
@@ -20,14 +21,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         RemoteEditManager.cleanUpOldCopies()
         try? FileManager.default.removeItem(at: QuickLookCenter.cacheRoot)   // last session's Quick Look downloads
         _ = SettingsModel.shared   // applies bandwidth limits saved last time
-        let controller = MainWindowController()
+        let args = CommandLine.arguments
+        let scripted = ["--selftest", "--selftest-password", "--snapshot", "--demo", "--states"].contains(where: args.contains)
+        let controller = MainWindowController(scripted: scripted)
         main = controller
         controller.window?.center()
         controller.showWindow(nil)
-        controller.window?.makeFirstResponder(controller.right.tableView)
+        if let active = controller.activePane { controller.window?.makeFirstResponder(active.focusView) }
         NSApp.activate(ignoringOtherApps: true)
 
-        let args = CommandLine.arguments
         if args.contains("--selftest") {
             SelfTest.run(controller)
             return
@@ -50,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {
+        main?.savePanes()
         RemoteEditManager.shared.stopAll()
         ConnectionManager.shared.closeAll()
     }
@@ -58,10 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func connect(_ sender: Any?) { main?.showConnectPrompt() }
     @objc func copyToOtherPane(_ sender: Any?) { main?.copyToOtherPane(sender) }
     @objc func moveToOtherPane(_ sender: Any?) { main?.moveToOtherPane(sender) }
-    @objc func newFolder(_ sender: Any?) { main?.activePane.newFolder() }
-    @objc func renameSelection(_ sender: Any?) { main?.activePane.renameSelected() }
-    @objc func deleteSelection(_ sender: Any?) { main?.activePane.deleteSelected() }
-    @objc func copyPath(_ sender: Any?) { main?.activePane.copyPath() }
+    @objc func newFolder(_ sender: Any?) { main?.activePane?.newFolder() }
+    @objc func renameSelection(_ sender: Any?) { main?.activePane?.renameSelected() }
+    @objc func deleteSelection(_ sender: Any?) { main?.activePane?.deleteSelected() }
+    @objc func copyPath(_ sender: Any?) { main?.activePane?.copyPath() }
     @objc func showSync(_ sender: Any?) { main?.showSync(sender) }
     @objc func openInTerminal(_ sender: Any?) { main?.openInTerminal(sender) }
     @objc func newTab(_ sender: Any?) { main?.newTab(sender) }
@@ -84,9 +87,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func viewAsList(_ sender: Any?) { main?.viewAsList(sender) }
     @objc func viewAsColumns(_ sender: Any?) { main?.viewAsColumns(sender) }
     @objc func viewAsIcons(_ sender: Any?) { main?.viewAsIcons(sender) }
-    @objc func makeBigger(_ sender: Any?) { main?.activePane.zoomIn() }
-    @objc func makeSmaller(_ sender: Any?) { main?.activePane.zoomOut() }
-    @objc func actualSize(_ sender: Any?) { main?.activePane.resetZoom() }
+    @objc func makeBigger(_ sender: Any?) { main?.activePane?.zoomIn() }
+    @objc func makeSmaller(_ sender: Any?) { main?.activePane?.zoomOut() }
+    @objc func actualSize(_ sender: Any?) { main?.activePane?.resetZoom() }
+    @objc func splitRight(_ sender: Any?) { main?.splitRight(sender) }
+    @objc func splitDown(_ sender: Any?) { main?.splitDown(sender) }
+    @objc func closePane(_ sender: Any?) { main?.closeActivePane(sender) }
+    @objc func focusPaneLeft(_ sender: Any?) { main?.focusPane(.left) }
+    @objc func focusPaneRight(_ sender: Any?) { main?.focusPane(.right) }
+    @objc func focusPaneUp(_ sender: Any?) { main?.focusPane(.top) }
+    @objc func focusPaneDown(_ sender: Any?) { main?.focusPane(.bottom) }
+    @objc func applyLayout(_ sender: NSMenuItem) {
+        if let name = sender.representedObject as? String, let preset = PaneLayout.Preset(rawValue: name) { main?.apply(preset) }
+    }
     @objc func closeTabOrWindow(_ sender: Any?) { main?.closeTabOrWindow(sender) }
     @objc func nextTab(_ sender: Any?) { main?.nextTab(sender) }
     @objc func previousTab(_ sender: Any?) { main?.previousTab(sender) }
@@ -119,6 +132,8 @@ enum MainMenu {
         }
         let up = String(UnicodeScalar(NSUpArrowFunctionKey)!)
         let down = String(UnicodeScalar(NSDownArrowFunctionKey)!)
+        let leftArrow = String(UnicodeScalar(NSLeftArrowFunctionKey)!)
+        let rightArrow = String(UnicodeScalar(NSRightArrowFunctionKey)!)
         let f5 = String(UnicodeScalar(NSF5FunctionKey)!)
         let f6 = String(UnicodeScalar(NSF6FunctionKey)!)
         // ⌘+ is ⌘= without Shift on most keyboards: a hidden twin catches that one.
@@ -153,7 +168,7 @@ enum MainMenu {
             item("Delete…", #selector(AppDelegate.deleteSelection(_:))),  // ⌘⌫, handled by the pane for the same reason
             .separator(),
             item("New Tab", #selector(AppDelegate.newTab(_:)), "t"),
-            item("Close Tab", #selector(AppDelegate.closeTabOrWindow(_:)), "w"),
+            item("Close Tab or Pane", #selector(AppDelegate.closeTabOrWindow(_:)), "w"),
             .separator(),
             item("Export Servers…", #selector(AppDelegate.exportServers(_:))),
             item("Import Servers…", #selector(AppDelegate.importServers(_:))),
@@ -184,6 +199,26 @@ enum MainMenu {
             item("Show Info", #selector(AppDelegate.toggleInspector(_:)), "i", [.command, .option]),
             .separator(),
             item("Toggle Sidebar", #selector(NSSplitViewController.toggleSidebar(_:)), "s", [.command, .control]),
+        ])
+        let layoutItem = item("Layout", nil)
+        let layoutMenu = NSMenu(title: "Layout")
+        for preset in PaneLayout.Preset.allCases {
+            let i = item(preset.title, #selector(AppDelegate.applyLayout(_:)))
+            i.representedObject = preset.rawValue
+            layoutMenu.addItem(i)
+        }
+        layoutItem.submenu = layoutMenu
+        submenu("Panes", [
+            item("New Pane on the Right", #selector(AppDelegate.splitRight(_:)), "\\"),
+            item("New Pane Below", #selector(AppDelegate.splitDown(_:)), "\\", [.command, .shift]),
+            item("Close Pane", #selector(AppDelegate.closePane(_:))),
+            .separator(),
+            layoutItem,
+            .separator(),
+            item("Pane on the Left", #selector(AppDelegate.focusPaneLeft(_:)), leftArrow, [.command, .option]),
+            item("Pane on the Right", #selector(AppDelegate.focusPaneRight(_:)), rightArrow, [.command, .option]),
+            item("Pane Above", #selector(AppDelegate.focusPaneUp(_:)), up, [.command, .option]),
+            item("Pane Below", #selector(AppDelegate.focusPaneDown(_:)), down, [.command, .option]),
         ])
         submenu("Go", [
             item("Back", #selector(AppDelegate.goBack(_:)), "["),
@@ -217,6 +252,11 @@ enum Snapshot {
         // Start both panes somewhere neutral so a snapshot never shows the person's own folders.
         // --left / --right take a local path ("/…") or a server (favorite name or ssh_config host).
         let neutral = [value("--left"), value("--right")].compactMap { $0 }.first { $0.hasPrefix("/") } ?? "/"
+        // --layout NAME: arrange the panes with a preset first (all at the neutral folder)
+        // --start-page: the last pane on its start page. --no-panes: no panes at all.
+        // --paths a,b,c: put the panes in these folders, in reading order, after everything else
+        if let name = value("--layout"), let preset = PaneLayout.Preset(rawValue: name) { controller.apply(preset) }
+        for pane in controller.panes { pane.navigate(to: .local(neutral)) }
         controller.left.navigate(to: .local(neutral))
         controller.right.navigate(to: .local(neutral))
         if let l = value("--left"), !l.hasPrefix("/") {
@@ -273,6 +313,25 @@ enum Snapshot {
             if let name = value("--tag") { pane.showTag(FinderTag(name: name, colour: FinderTags.colour(of: name))) }
             // --edit-path: show the right pane's path field
             if args.contains("--edit-path") { pane.beginEditingPath() }
+            for (pane, path) in zip(controller.panes, value("--paths")?.split(separator: ",").map(String.init) ?? []) {
+                pane.navigate(to: .local(path))
+            }
+            if value("--paths") != nil { try? await Task.sleep(for: .milliseconds(400)) }
+            if let name = value("--select-first"), let first = controller.panes.first, let i = first.entries.firstIndex(where: { $0.name == name }) {
+                first.tableView.selectRowIndexes([i], byExtendingSelection: false)
+                controller.window?.makeFirstResponder(first.tableView)
+            }
+            if args.contains("--start-page") { controller.panes.last?.setShowsStart(true) }
+            if args.contains("--no-panes") { controller.panes.forEach(controller.closePane) }
+            // --picker: choose a destination for what's selected (with --select)
+            if args.contains("--picker") { controller.transfer(.copy, alwaysAsk: true) }
+            if let i = value("--highlight").flatMap(Int.init) { controller.picker?.highlight(i) }
+            // --drag-at x,y: dragging the first pane, the pointer at this fraction of the pane area
+            if let at = value("--drag-at")?.split(separator: ",").compactMap({ Double($0) }), at.count == 2, let first = controller.panes.first {
+                let b = controller.area.visibleBounds
+                controller.beginDrag(first, tab: nil)
+                controller.updateDrag(at: NSPoint(x: b.minX + b.width * at[0], y: b.minY + b.height * at[1]))
+            }
             // --view icons|columns: switch the right pane's view
             if let mode = value("--view") {
                 controller.paneDidBecomeActive(pane)
@@ -303,6 +362,14 @@ enum Snapshot {
             frameView.layoutSubtreeIfNeeded()
             guard let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else { exit(1) }
             frameView.cacheDisplay(in: frameView.bounds, to: rep)
+            // The picker is its own window over this one.
+            if let surface = controller.picker?.surface, let top = surface.bitmapImageRepForCachingDisplay(in: surface.bounds) {
+                surface.cacheDisplay(in: surface.bounds, to: top)
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+                top.draw(in: frameView.bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
+                NSGraphicsContext.restoreGraphicsState()
+            }
             let ok = rep.representation(using: .png, properties: [:]).map {
                 FileManager.default.createFile(atPath: path, contents: $0)
             } ?? false

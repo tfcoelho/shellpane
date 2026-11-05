@@ -15,6 +15,8 @@ struct TabStrip: View {
     let onSelect: (Int) -> Void
     let onClose: (Int) -> Void
     let onNew: () -> Void
+    /// A tab dragged to a pane's edge becomes a pane; dragged onto another pane, it joins that pane's tabs.
+    var onDrag: (Int, PaneDragPhase) -> Void = { _, _ in }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -38,6 +40,9 @@ struct TabStrip: View {
                 .overlay(alignment: .trailing) { Rectangle().fill(Tokens.Colors.border).frame(width: 1) }
                 .contentShape(Rectangle())
                 .onTapGesture { onSelect(item.index) }
+                .gesture(DragGesture(minimumDistance: 8)
+                    .onChanged { _ in onDrag(item.index, .changed) }
+                    .onEnded { _ in onDrag(item.index, .ended) })
                 .accessibilityElement(children: .combine)
                 .accessibilityAddTraits(item.isCurrent ? [.isSelected, .isButton] : .isButton)
                 .accessibilityLabel(item.title)

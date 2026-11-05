@@ -82,7 +82,8 @@ public enum Tokens {
         public static let tabBar: CGFloat = 28
         public static let pathBar: CGFloat = 26
         public static let statusBar: CGFloat = 22
-        public static let paneMinWidth: CGFloat = 280
+        public static let paneMinWidth: CGFloat = 220
+        public static let paneMinHeight: CGFloat = 180
         public static let windowMinWidth: CGFloat = 760
         public static let windowMinHeight: CGFloat = 420
         public static let sheetWidth: CGFloat = 460

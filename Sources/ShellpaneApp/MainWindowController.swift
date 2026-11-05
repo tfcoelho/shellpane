@@ -12,9 +12,22 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
     let sidebarModel = SidebarModel()
     let inspectorModel = InspectorModel()
     private var inspectorItem: NSSplitViewItem?
-    let left: PaneViewController
-    let right: PaneViewController
-    private(set) var activePane: PaneViewController
+    /// Holds the panes. See PaneManagement.swift.
+    let area = PaneAreaController()
+    var areaItem: NSSplitViewItem?
+    var layout: PaneLayout?
+    var paneByID: [UUID: PaneViewController] = [:]
+    /// The panes in reading order: left to right, top to bottom.
+    var panes: [PaneViewController] { layout?.paneIDs.compactMap { paneByID[$0] } ?? [] }
+    /// The pane F5, ⌘V and the toolbar act on. nil only with no panes open.
+    var activePane: PaneViewController?
+    var drag: PaneDrag?
+    var picker: TransferPicker?
+    /// Driven by a script (self-test, snapshot, demo): always two panes, and nothing saved or restored.
+    let isScripted: Bool
+    /// For scripts, which start with two panes.
+    var left: PaneViewController { panes[0] }
+    var right: PaneViewController { panes[1] }
     private let activityPopover = NSPopover()
 
     private enum Item {
@@ -28,14 +41,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         static let terminal = NSToolbarItem.Identifier("terminal")
         static let viewMode = NSToolbarItem.Identifier("viewMode")
         static let inspector = NSToolbarItem.Identifier("inspector")
+        static let addPane = NSToolbarItem.Identifier("addPane")
     }
 
-    init() {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        left = PaneViewController(location: .local(home))
-        right = PaneViewController(location: .local(home + "/Downloads"))
-        activePane = right
-
+    init(scripted: Bool = false) {
+        isScripted = scripted
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 720),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
@@ -51,12 +61,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         sidebarItem.minimumThickness = Tokens.Size.sidebarMin
         sidebarItem.maximumThickness = Tokens.Size.sidebarMax
         split.addSplitViewItem(sidebarItem)
-        for pane in [left, right] {
-            pane.delegate = self
-            let item = NSSplitViewItem(viewController: pane)
-            item.minimumThickness = Tokens.Size.paneMinWidth
-            split.addSplitViewItem(item)
-        }
+        let areaItem = NSSplitViewItem(viewController: area)
+        areaItem.minimumThickness = Tokens.Size.paneMinWidth
+        split.addSplitViewItem(areaItem)
+        self.areaItem = areaItem
         inspectorModel.onChanged = { [weak self] loc in self?.folderChanged(loc.path, identity: loc.ops.identity) }
         ConnectionManager.shared.log.onRecord = { [weak self] in
             Task { @MainActor in if self?.inspectorModel.tab == .log { self?.inspectorModel.reloadLog() } }
@@ -78,14 +86,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         window.toolbarStyle = .unified
 
         TransferCenter.shared.window = window
-        RemoteEditManager.shared.onStatus = { [weak self] message in self?.activePane.flash(message) }
+        RemoteEditManager.shared.onStatus = { [weak self] message in self?.activePane?.flash(message) }
         RemoteEditManager.shared.onUploaded = { [weak self] folder, identity in self?.folderChanged(folder, identity: identity) }
         activityPopover.behavior = .transient
         activityPopover.contentViewController = NSHostingController(rootView: ActivityView(center: TransferCenter.shared))
-
-        right.isActive = true
-        left.tableView.nextKeyView = right.tableView
-        right.tableView.nextKeyView = left.tableView
+        // Its real size, up front: left to SwiftUI, it opens smaller, is placed on screen at that size, then grows
+        // off the edge (in full screen, or with the window against the screen's edge).
+        activityPopover.contentSize = ActivityView.size
 
         sidebarModel.sshHosts = ConnectionManager.shared.sshConfigHosts
         sidebarModel.reloadFavorites()
@@ -99,7 +106,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         sidebarModel.onSaveHost = { [weak self] host in self?.showServerForm(.connect, prefillAlias: host) }
         sidebarModel.onOpenPlace = { [weak self] place in
             guard let self else { return }
-            self.activePane.navigate(to: .local(place.path))
+            self.ensureActivePane().navigate(to: .local(place.path))
         }
         sidebarModel.onAddServer = { [weak self] in self?.showConnectPrompt() }
         sidebarModel.onOpenSynclet = { [weak self] s in self?.openSynclet(s) }
@@ -108,8 +115,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
             changed.colour = colour.rawValue
             try? ConnectionManager.shared.favorites.save(changed)
             self?.sidebarModel.reloadFavorites()
-            self?.left.refreshChrome()
-            self?.right.refreshChrome()
+            self?.panes.forEach { $0.refreshChrome() }
         }
         sidebarModel.onMoveFavorite = { [weak self] fav, group in
             try? ConnectionManager.shared.groups.move(favorite: fav.id, to: group)
@@ -139,7 +145,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         sidebarModel.reloadSynclets()
         sidebarModel.reloadBookmarks()
         sidebarModel.reloadMac()
-        sidebarModel.onOpenTag = { [weak self] t in self?.activePane.showTag(t) }
+        sidebarModel.onOpenTag = { [weak self] t in self?.ensureActivePane().showTag(t) }
         // Finder's Favorites and tags can change while Shellpane is open: read them again on coming back.
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.sidebarModel.reloadMac() }
@@ -155,18 +161,39 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
             try? ConnectionManager.shared.bookmarks.delete(b.id)   // only the shortcut: the folder itself is untouched
             self?.bookmarksChanged()
         }
+
+        area.setStartPage(AnyView(StartPage(model: sidebarModel)))
+        if scripted {
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            let first = makePane(location: .local(home))
+            let second = makePane(location: .local(home + "/Downloads"))
+            setLayout(PaneLayout.Preset.sideBySide.layout([first.paneID, second.paneID]), focus: second)
+        } else {
+            restorePanes()
+        }
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
-    var otherPane: PaneViewController { activePane === left ? right : left }
+    /// The active pane, or a new one if there are none: what opening something from the sidebar lands in.
+    /// New, it shows the start page until something opens, so a failed connection goes back there.
+    @discardableResult
+    func ensureActivePane() -> PaneViewController {
+        if let activePane { return activePane }
+        if let last = panes.last {
+            paneDidBecomeActive(last)
+            return last
+        }
+        let pane = makePane(showsStart: true)
+        setLayout(.pane(pane.paneID), focus: pane)
+        return pane
+    }
 
     // MARK: - PaneDelegate
 
     func paneDidBecomeActive(_ pane: PaneViewController) {
         activePane = pane
-        left.isActive = pane === left
-        right.isActive = pane === right
+        for p in panes { p.isActive = p === pane }
         updateHistoryButtons()
         paneSelectionChanged(pane)
     }
@@ -179,7 +206,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
     @objc func toggleInspector(_ sender: Any?) {
         guard let item = inspectorItem else { return }
         item.animator().isCollapsed.toggle()
-        if !item.isCollapsed {
+        if !item.isCollapsed, let activePane {
             inspectorModel.update(location: activePane.location, selection: activePane.selectedEntries)
             if inspectorModel.tab == .log { inspectorModel.reloadLog() }
         }
@@ -189,31 +216,32 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
 
     func paneDidNavigate(_ pane: PaneViewController) {
         if pane === activePane { updateHistoryButtons() }
+        updateKeyLoop()
     }
 
     @objc private func viewModeClicked(_ sender: NSToolbarItemGroup) {
-        activePane.viewMode = [.list, .icons, .columns][max(0, min(2, sender.selectedIndex))]
+        activePane?.viewMode = [.list, .icons, .columns][max(0, min(2, sender.selectedIndex))]
     }
 
-    @objc func viewAsList(_ sender: Any?) { activePane.viewMode = .list }
-    @objc func viewAsColumns(_ sender: Any?) { activePane.viewMode = .columns }
-    @objc func viewAsIcons(_ sender: Any?) { activePane.viewMode = .icons }
+    @objc func viewAsList(_ sender: Any?) { activePane?.viewMode = .list }
+    @objc func viewAsColumns(_ sender: Any?) { activePane?.viewMode = .columns }
+    @objc func viewAsIcons(_ sender: Any?) { activePane?.viewMode = .icons }
 
-    private func updateHistoryButtons() {
+    func updateHistoryButtons() {
         if let mode = window?.toolbar?.items.first(where: { $0.itemIdentifier == Item.viewMode }) as? NSToolbarItemGroup {
-            mode.selectedIndex = [PaneViewController.ViewMode.list, .icons, .columns].firstIndex(of: activePane.viewMode) ?? 0
+            mode.selectedIndex = [PaneViewController.ViewMode.list, .icons, .columns].firstIndex(of: activePane?.viewMode ?? .list) ?? 0
         }
         guard let group = window?.toolbar?.items.first(where: { $0.itemIdentifier == Item.history }) as? NSToolbarItemGroup,
               group.subitems.count == 2 else { return }
-        group.subitems[0].isEnabled = activePane.canGoBack
-        group.subitems[1].isEnabled = activePane.canGoForward
+        group.subitems[0].isEnabled = activePane?.canGoBack ?? false
+        group.subitems[1].isEnabled = activePane?.canGoForward ?? false
     }
 
-    @objc func goBack(_ sender: Any?) { activePane.goBack() }
-    @objc func goForward(_ sender: Any?) { activePane.goForward() }
+    @objc func goBack(_ sender: Any?) { activePane?.goBack() }
+    @objc func goForward(_ sender: Any?) { activePane?.goForward() }
 
     @objc private func historyClicked(_ sender: NSToolbarItemGroup) {
-        sender.selectedIndex == 0 ? activePane.goBack() : activePane.goForward()
+        if sender.selectedIndex == 0 { activePane?.goBack() } else { activePane?.goForward() }
     }
 
     func paneRequestsCopyToOtherPane(_ pane: PaneViewController) {
@@ -232,7 +260,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
     }
 
     func pane(withID id: UUID) -> PaneViewController? {
-        [left, right].first { $0.paneID == id }
+        paneByID[id]
     }
 
     // MARK: - Server appearance
@@ -285,13 +313,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
 
     func bookmarksChanged() {
         sidebarModel.reloadBookmarks()
-        left.refreshChrome()
-        right.refreshChrome()
+        panes.forEach { $0.refreshChrome() }
     }
 
     /// Opens a favorite folder in the active pane, connecting first when it's on a server not open there.
     func openBookmark(_ b: Bookmark) {
-        let pane = activePane
+        let pane = ensureActivePane()
         switch b.place {
         case .local:
             pane.navigate(to: .local(b.path))
@@ -306,10 +333,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         }
     }
 
-    @objc func goToPath(_ sender: Any?) { activePane.beginEditingPath() }
+    @objc func goToPath(_ sender: Any?) { activePane?.beginEditingPath() }
 
     @objc func toggleBookmark(_ sender: Any?) {
-        let active = activePane
+        guard let active = activePane else { return }
         pane(active, setBookmarked: !pane(active, isBookmarked: active.location.path), path: active.location.path)
     }
 
@@ -331,7 +358,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
     }
 
     func folderChanged(_ folder: String, identity: String) {
-        for pane in [left, right] where pane.location.ops.identity == identity && pane.location.path == folder {
+        for pane in panes where pane.location.ops.identity == identity && pane.location.path == folder {
             pane.reload()
         }
     }
@@ -414,7 +441,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
             do {
                 let cm = ConnectionManager.shared
                 try BackupIO.export(favorites: cm.favorites, groups: cm.groups, synclets: cm.synclets).write(to: url, options: .atomic)
-                self?.activePane.flash("Exported servers to \(url.lastPathComponent).")
+                self?.activePane?.flash("Exported servers to \(url.lastPathComponent).")
             } catch {
                 self?.showError(title: "Couldn't export", message: error.localizedDescription)
             }
@@ -441,26 +468,57 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         }
     }
 
-    @objc func toggleFilter(_ sender: Any?) { activePane.toggleFilter() }
+    @objc func toggleFilter(_ sender: Any?) { activePane?.toggleFilter() }
 
     // MARK: - Sync (S10)
 
     private var syncSheet: NSWindow?
 
-    /// Left pane ↔ right pane, as they are now.
-    @objc func openInTerminal(_ sender: Any?) { activePane.openInTerminal() }
+    @objc func openInTerminal(_ sender: Any?) { activePane?.openInTerminal() }
 
-    @objc func newTab(_ sender: Any?) { activePane.newTab() }
-    /// ⌘W: the active pane's tab if it has more than one, otherwise the window.
+    @objc func newTab(_ sender: Any?) { activePane?.newTab() }
+    /// ⌘W: the active pane's tab if it has more than one, otherwise the pane; with no panes, the window.
     @objc func closeTabOrWindow(_ sender: Any?) {
-        if !activePane.closeTab() { window?.performClose(sender) }
+        guard let activePane else { window?.performClose(sender); return }
+        if !activePane.closeTab() { closePane(activePane) }
     }
-    @objc func nextTab(_ sender: Any?) { activePane.nextTab(1) }
-    @objc func previousTab(_ sender: Any?) { activePane.nextTab(-1) }
+    @objc func nextTab(_ sender: Any?) { activePane?.nextTab(1) }
+    @objc func previousTab(_ sender: Any?) { activePane?.nextTab(-1) }
 
+    /// The active pane against another one. Two panes: those two, in reading order. More: pick which.
     @objc func showSync(_ sender: Any?) {
-        guard left.acceptsNewItems(), right.acceptsNewItems() else { return }
-        presentSync(SyncModel(left: left.location, right: right.location))
+        guard let active = activePane else { NSSound.beep(); return }
+        let others = panes.filter { $0 !== active }
+        guard !others.isEmpty else {
+            NSSound.beep()
+            active.flash("Open a second pane to compare two folders (⌘\\).")
+            return
+        }
+        guard active.acceptsNewItems() else { return }
+        if others.count == 1 {
+            guard others[0].acceptsNewItems() else { return }
+            let ordered = panes
+            presentSync(SyncModel(left: ordered[0].location, right: ordered[1].location))
+            return
+        }
+        showPicker(source: active, sourceText: "Comparing this folder", actionText: "Compare with this folder",
+                   problem: { pane in
+                       if pane.showsStart { return "No folder open here yet" }
+                       if pane.showsTag { return "Showing a tag, not a folder" }
+                       return nil
+                   },
+                   openPane: nil) { [weak self, weak active] other in
+            guard let self, let active else { return }
+            let ordered = self.panes.filter { $0 === active || $0 === other }
+            guard ordered.count == 2 else { return }
+            self.presentSync(SyncModel(left: ordered[0].location, right: ordered[1].location))
+        }
+    }
+
+    @objc func splitRight(_ sender: Any?) { split(.right) }
+    @objc func splitDown(_ sender: Any?) { split(.bottom) }
+    @objc func closeActivePane(_ sender: Any?) {
+        if let activePane { closePane(activePane) } else { NSSound.beep() }
     }
 
     func presentSync(_ model: SyncModel) {
@@ -477,8 +535,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
             self?.syncSheet = nil
         }
         model.onSynced = { [weak self] in
-            self?.left.reload()
-            self?.right.reload()
+            self?.panes.forEach { $0.reload() }
         }
         window.beginSheet(sheet)
         model.compare()
@@ -568,7 +625,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
     func disconnect(_ fav: Favorite) {
         ConnectionManager.shared.disconnect(fav.id)
         sidebarModel.connected[fav.id] = nil
-        for pane in [left, right] where pane.location.session?.isAlive == false {
+        for pane in panes where pane.location.session?.isAlive == false {
             pane.navigate(to: .local(FileManager.default.homeDirectoryForCurrentUser.path))
         }
     }
@@ -577,14 +634,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
     func connect(_ fav: Favorite, typedPassword: String? = nil, savePassword: Bool = false, saved: Bool = true,
                  path: String? = nil) {
         let key = saved ? fav.id : "adhoc:" + fav.id
-        run(key: key, label: fav.name, pane: activePane, path: path ?? fav.initialPath) {
+        run(key: key, label: fav.name, pane: ensureActivePane(), path: path ?? fav.initialPath) {
             try await ConnectionManager.shared.connect(fav, typedPassword: typedPassword, savePassword: savePassword && saved)
         }
     }
 
     /// An ssh_config alias or a typed address, not saved.
     func connect(to target: SSHTarget, key: String, path: String? = nil) {
-        run(key: key, label: target.displayName, pane: activePane, path: path) {
+        run(key: key, label: target.displayName, pane: ensureActivePane(), path: path) {
             try await ConnectionManager.shared.connect(target)
         }
     }
@@ -593,6 +650,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
                      _ open: @escaping @MainActor () async throws -> RemoteSession) {
         sidebarModel.failed.remove(key)
         sidebarModel.connecting.insert(key)
+        // Leaving the start page for now; a failed connection comes back to it.
+        let startPage = pane.showsStart, resume = pane.resume
+        pane.setShowsStart(false)
         pane.showBusy("Connecting to \(label)…")
         Task { @MainActor in
             defer { sidebarModel.connecting.remove(key) }
@@ -607,11 +667,17 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
                 pane.navigate(to: .remote(session, path ?? session.home))
                 pane.openedAs = key
                 pane.refreshChrome()
-                pane.view.window?.makeFirstResponder(pane.tableView)
+                pane.view.window?.makeFirstResponder(pane.focusView)
+                savePanes()
             } catch {
                 sidebarModel.failed.insert(key)
                 pane.showBusy(nil)
-                pane.reload()
+                if startPage {
+                    pane.resume = resume
+                    pane.setShowsStart(true)
+                } else {
+                    pane.reload()
+                }
                 showConnectFailure(label: label, error: error)
             }
         }
@@ -621,18 +687,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
 
     @objc func moveToOtherPane(_ sender: Any?) { transferToOtherPane(.move) }
 
-    func transferToOtherPane(_ mode: TransferBatch.Mode) {
-        let source = activePane
-        let entries = source.selectedEntries
-        guard !entries.isEmpty else { NSSound.beep(); return }
-        let dest = otherPane
-        guard dest.acceptsNewItems() else { return }
-        TransferCenter.shared.start(mode, entries, from: source.location, to: dest.location) { [weak source, weak dest] in
-            dest?.reload()
-            if mode == .move { source?.reload() }
-        }
-        showActivity(nil)
-    }
+    func transferToOtherPane(_ mode: TransferBatch.Mode) { transfer(mode) }
+
+    /// The toolbar button: always shows where the files can go.
+    @objc func transferClicked(_ sender: Any?) { transfer(.copy, alwaysAsk: true) }
 
     @objc func showActivity(_ sender: Any?) {
         if activityPopover.isShown { activityPopover.close(); return }
@@ -644,19 +702,23 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         }
     }
 
+    /// The Activity popover's window while it's open.
+    var activityPopoverFrame: NSRect? {
+        activityPopover.isShown ? activityPopover.contentViewController?.view.window?.frame : nil
+    }
+
     /// Closes the transfer popover (the demo recording captures only the window).
     func hideActivity() { activityPopover.close() }
 
-    @objc func reloadActive(_ sender: Any?) { activePane.reload() }
+    @objc func reloadActive(_ sender: Any?) { activePane?.reload() }
 
-    @objc func goUp(_ sender: Any?) { activePane.goUp() }
+    @objc func goUp(_ sender: Any?) { activePane?.goUp() }
 
-    @objc func openSelection(_ sender: Any?) { activePane.openSelected() }
+    @objc func openSelection(_ sender: Any?) { activePane?.openSelected() }
 
     @objc func toggleHidden(_ sender: Any?) {
-        let show = !activePane.showHidden
-        left.showHidden = show
-        right.showHidden = show
+        let show = !(activePane?.showHidden ?? false)
+        panes.forEach { $0.showHidden = show }
     }
 
     /// The plain reason, ssh's own words behind it, and a command to try the same login in Terminal.
@@ -708,7 +770,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
     // MARK: - Toolbar
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, Item.history, Item.viewMode, Item.connect, .flexibleSpace, Item.copy, Item.sync, Item.terminal, Item.refresh, Item.hidden, Item.activity, .inspectorTrackingSeparator, Item.inspector]
+        [.toggleSidebar, .sidebarTrackingSeparator, Item.history, Item.viewMode, Item.connect, Item.addPane, .flexibleSpace, Item.copy, Item.sync, Item.terminal, Item.refresh, Item.hidden, Item.activity, .inspectorTrackingSeparator, Item.inspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -752,8 +814,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         }
         switch id {
         case Item.connect: set("Connect", "plus.circle", #selector(showConnectPrompt(_:)), "Connect to a server (⌘K)")
-        case Item.copy: set("Copy to Other Pane", "arrow.left.arrow.right", #selector(copyToOtherPane(_:)), "Copy the selected files to the other pane (F5)")
-        case Item.sync: set("Sync", "arrow.triangle.2.circlepath", #selector(showSync(_:)), "Compare and sync the two panes' folders")
+        case Item.addPane: set("New Pane", "rectangle.split.2x1", #selector(splitRight(_:)), "Add a pane on the right (⌘\\), or below (⇧⌘\\)")
+        case Item.copy: set("Transfer", "arrow.left.arrow.right", #selector(transferClicked(_:)), "Choose a pane to copy the selected files to (F5)")
+        case Item.sync: set("Sync", "arrow.triangle.2.circlepath", #selector(showSync(_:)), "Compare and sync two panes' folders")
         case Item.inspector: set("Info", "info.circle", #selector(toggleInspector(_:)), "Show or hide Info and the Log (⌥⌘I)")
         case Item.terminal: set("Terminal", "terminal", #selector(openInTerminal(_:)), "Open this folder in a terminal; on a server, over ssh (⌥⌘T)")
         case Item.refresh: set("Refresh", "arrow.clockwise", #selector(reloadActive(_:)), "Reload this folder (⌘R)")
@@ -765,6 +828,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
     }
 
     func windowWillClose(_ notification: Notification) {
+        savePanes()
         ConnectionManager.shared.closeAll()
     }
 }
