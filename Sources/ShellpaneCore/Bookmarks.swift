@@ -2,7 +2,7 @@ import Foundation
 
 /// A favorite folder: a path on this Mac, on a saved server, or on a ~/.ssh/config host.
 public struct Bookmark: Identifiable, Equatable, Sendable {
-    public enum Place: Equatable, Sendable {
+    public enum Place: Hashable, Sendable {
         case local
         case favorite(String)   // a saved server's id
         case sshAlias(String)   // a Host from ~/.ssh/config that isn't saved
@@ -26,6 +26,24 @@ public struct Bookmark: Identifiable, Equatable, Sendable {
         self.sortOrder = sortOrder
         self.icon = icon
         self.colour = colour
+    }
+
+    public enum EditError: Error, Equatable, LocalizedError {
+        case notAbsolute, alreadyThere
+
+        public var errorDescription: String? {
+            switch self {
+            case .notAbsolute: "A folder's path starts with /."
+            case .alreadyThere: "That folder is already in Favorite Folders."
+            }
+        }
+    }
+
+    /// A typed path as it's kept: no spaces around it, no slash at the end.
+    public static func clean(path: String) -> String {
+        var p = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        while p.count > 1 && p.hasSuffix("/") { p.removeLast() }
+        return p
     }
 
     /// The name a new favorite folder gets: the folder's own name ("/" for the top).
@@ -76,12 +94,17 @@ public final class BookmarksStore: @unchecked Sendable {
         try db.execute("UPDATE bookmarks SET name = ?, updated_at = unixepoch() WHERE id = ?", [.text(trimmed), .text(id)])
     }
 
-    /// Its name, icon and colour together, as the edit sheet saves them. nil icon or colour is the default.
-    public func update(_ id: String, name: String, icon: String?, colour: String?) throws {
+    /// Everything the edit sheet saves, together. nil icon or colour is the default.
+    public func update(_ id: String, name: String, place: Bookmark.Place, path: String, icon: String?, colour: String?) throws {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { throw Favorite.ValidationError.missingName }
-        try db.execute("UPDATE bookmarks SET name = ?, icon = ?, colour = ?, updated_at = unixepoch() WHERE id = ?",
-                       [.text(trimmed), icon.sql, colour.sql, .text(id)])
+        let cleaned = Bookmark.clean(path: path)
+        guard cleaned.hasPrefix("/") else { throw Bookmark.EditError.notAbsolute }
+        if let other = try find(place: place, path: cleaned), other.id != id { throw Bookmark.EditError.alreadyThere }
+        try db.execute("""
+            UPDATE bookmarks SET name = ?, favorite_id = ?, ssh_alias = ?, path = ?, icon = ?, colour = ?, updated_at = unixepoch()
+            WHERE id = ?
+            """, [.text(trimmed), Self.favoriteID(place).sql, Self.alias(place).sql, .text(cleaned), icon.sql, colour.sql, .text(id)])
     }
 
     public func delete(_ id: String) throws {

@@ -71,6 +71,22 @@ final class ConnectionManager {
         return await Task.detached { try? SSHConfig.resolve(alias, configFile: cfg) }.value
     }
 
+    /// Where ssh really goes for a favorite folder's place, with a saved server's own user and port. nil on this Mac.
+    func address(of place: Bookmark.Place) async -> String? {
+        switch place {
+        case .local:
+            return nil
+        case let .sshAlias(alias):
+            return await resolve(alias: alias)?.summary
+        case let .favorite(id):
+            guard let fav = try? favorites.favorite(id: id) else { return nil }
+            guard var resolved = await resolve(alias: fav.target.host) else { return fav.subtitle }
+            if let user = fav.target.user { resolved.user = user }
+            if let port = fav.target.port { resolved.port = port }
+            return resolved.summary
+        }
+    }
+
     // MARK: - Connecting
 
     /// A saved server. `typedPassword` comes from the Connect form; `savePassword` keeps it in Keychain once it works.

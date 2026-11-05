@@ -85,6 +85,11 @@ public enum SSHConfig {
         public var port: Int
         public var identityFiles: [String]
         public var proxyJump: String?
+
+        /// Where ssh really goes: `deploy@10.0.0.4:22 via bastion`.
+        public var summary: String {
+            "\(user)@\(hostname):\(port)" + (proxyJump.map { " via \($0)" } ?? "")
+        }
     }
 
     public static func resolve(_ alias: String, configFile: String? = nil) throws -> Resolved {

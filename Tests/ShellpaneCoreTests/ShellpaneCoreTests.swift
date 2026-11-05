@@ -485,13 +485,13 @@ func tempDBPath() -> String {
         let store = BookmarksStore(database: try Database(path: ":memory:"))
         let b = try store.add(place: .local, path: "/srv/shop")
         #expect(b.icon == nil && b.colour == nil)
-        try store.update(b.id, name: "Shop", icon: "cart", colour: "green")
+        try store.update(b.id, name: "Shop", place: b.place, path: b.path, icon: "cart", colour: "green")
         var saved = try store.find(place: .local, path: "/srv/shop")
         #expect(saved?.name == "Shop" && saved?.icon == "cart" && saved?.colour == "green")
-        try store.update(b.id, name: "Shop", icon: nil, colour: nil)
+        try store.update(b.id, name: "Shop", place: b.place, path: b.path, icon: nil, colour: nil)
         saved = try store.find(place: .local, path: "/srv/shop")
         #expect(saved?.icon == nil && saved?.colour == nil)
-        #expect(throws: (any Error).self) { try store.update(b.id, name: "  ", icon: nil, colour: nil) }
+        #expect(throws: (any Error).self) { try store.update(b.id, name: "  ", place: b.place, path: b.path, icon: nil, colour: nil) }
     }
 
     @Test func foldersSavedBeforeAppearancesLookAsTheyDid() throws {
@@ -538,6 +538,33 @@ func tempDBPath() -> String {
         #expect(throws: (any Error).self) { try store.rename(b.id, to: "   ") }
         try store.delete(b.id)
         #expect(try store.all().isEmpty)
+    }
+
+    @Test func editingChangesWhereAFolderIs() throws {
+        let db = try Database(path: ":memory:")
+        let web = Favorite(name: "Web", host: "example.com")
+        try FavoritesStore(database: db).save(web)
+        let store = BookmarksStore(database: db)
+        let b = try store.add(place: .local, path: "/tmp")
+        try store.update(b.id, name: "Site", place: .favorite(web.id), path: " /var/www/ ", icon: "globe", colour: "green")
+        var edited = try store.all().first
+        #expect(edited?.name == "Site" && edited?.place == .favorite(web.id) && edited?.path == "/var/www")
+        #expect(edited?.icon == "globe" && edited?.colour == "green")
+        try store.update(b.id, name: "Site", place: .sshAlias("db-1"), path: "/", icon: nil, colour: nil)
+        edited = try store.all().first
+        #expect(edited?.place == .sshAlias("db-1") && edited?.path == "/" && edited?.icon == nil)
+        try store.update(b.id, name: "Site", place: .local, path: "/", icon: nil, colour: nil)
+        #expect(try store.all().first?.place == .local)
+    }
+
+    @Test func editingRefusesABadPathOrASecondCopy() throws {
+        let store = BookmarksStore(database: try Database(path: ":memory:"))
+        let a = try store.add(place: .local, path: "/a")
+        try store.add(place: .local, path: "/b")
+        #expect(throws: Bookmark.EditError.notAbsolute) { try store.update(a.id, name: "a", place: .local, path: "a", icon: nil, colour: nil) }
+        #expect(throws: Bookmark.EditError.alreadyThere) { try store.update(a.id, name: "a", place: .local, path: "/b/", icon: nil, colour: nil) }
+        try store.update(a.id, name: "Renamed", place: .local, path: "/a", icon: nil, colour: nil)   // itself is fine
+        #expect(try store.all().map(\.path) == ["/a", "/b"])
     }
 
     @Test func deletingAServerRemovesItsFolders() throws {

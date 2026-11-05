@@ -942,11 +942,59 @@ enum SelfTest {
                 let automatic = c.sidebarModel.bookmarks.first { $0.id == bookmark.id }
                 check("F01-H20 Automatic goes back to no colour of its own, keeping the icon", automatic?.colour == nil && automatic?.icon == "shippingbox")
             }
+            // F01-H22 the same sheet says where the folder is and lets it change
+            if let edited = c.sidebarModel.bookmarks.first(where: { $0.id == bookmark.id }), let session = right.location.session {
+                c.showBookmarkForm(edited)
+                let form = c.appearanceFormModel
+                check("F01-H22 the sheet shows the folder's path and place", form?.paths.first?.value == bookmark.path && form?.place == bookmark.place)
+                let resolved = await waitUntil { form?.isResolving == false }
+                let host = await ConnectionManager.shared.resolve(alias: session.target.host)?.hostname ?? "?"
+                check("F01-H22 the sheet shows where ssh really goes", resolved && form?.connection?.contains(host) == true, form?.connection ?? "nothing")
+                form?.paths[0].value = "releases"
+                check("F01-H22 a relative path can't be saved", form?.canSave == false && form?.pathProblem != nil)
+                form?.paths[0].value = "/tmp/moved/"
+                check("F01-H22 an absolute path can", form?.canSave == true && form?.pathProblem == nil)
+                form?.place = .local
+                check("F01-H22 moved to this Mac, it shows no server", form?.showsConnection == false && form?.icon == "shippingbox")
+                form?.onSave()
+                let moved = c.sidebarModel.bookmarks.first { $0.id == bookmark.id }
+                check("F01-H22 saving moves the favorite folder", moved?.path == "/tmp/moved" && moved?.place == .local, "\(String(describing: moved))")
+                if let moved {
+                    c.showBookmarkForm(moved)
+                    c.appearanceFormModel?.paths[0].value = bookmark.path
+                    c.appearanceFormModel?.place = bookmark.place
+                    c.appearanceFormModel?.onSave()
+                }
+            } else { check("F01-H22 the folder is still there", false) }
         }
+        // F01-H23 a group is renamed and given its look from one sheet, as everything else is
+        if let group = try? ConnectionManager.shared.groups.create("Before") {
+            c.sidebarModel.reloadFavorites()
+            c.showGroupForm(group)
+            c.appearanceFormModel?.name = "After"
+            c.appearanceFormModel?.colour = .orange
+            c.appearanceFormModel?.onSave()
+            check("F01-H23 a group's name and colour are saved together", c.sidebarModel.groups.first { $0.id == group.id }?.name == "After" && c.sidebarModel.ownColour(AppearanceKey.group(group.id)) == .orange)
+            c.showGroupForm(c.sidebarModel.groups.first { $0.id == group.id } ?? group)
+            c.appearanceFormModel?.onDelete()
+            check("F01-H23 the sheet can delete it and closes", !c.sidebarModel.groups.contains { $0.id == group.id } && c.appearanceFormModel == nil && NSApp.windows.allSatisfy { $0.attachedSheet == nil })
+        } else { check("F01-H23 group created", false) }
+        // F01-H24 a saved sync: its name and both folders
+        let synclet = Synclet(name: "Before", leftFavoriteID: nil, leftPath: "/tmp/a", rightFavoriteID: nil, rightPath: "/tmp/b", options: SyncOptions())
+        try? ConnectionManager.shared.synclets.save(synclet)
+        c.sidebarModel.reloadSynclets()
+        c.showSyncletForm(synclet)
+        c.appearanceFormModel?.name = "After"
+        c.appearanceFormModel?.paths[1].value = "/tmp/c"
+        c.appearanceFormModel?.onSave()
+        let editedSync = c.sidebarModel.synclets.first { $0.id == synclet.id }
+        check("F01-H24 a synclet's name and folders are saved", editedSync?.name == "After" && editedSync?.leftPath == "/tmp/a" && editedSync?.rightPath == "/tmp/c")
+        c.sidebarModel.onDeleteSynclet(synclet)
         // F01-H21 the look of anything else in the sidebar: a ~/.ssh/config host here
         let hostItem = c.sidebarModel.hostItem("look-host")
         check("F01-H21 a config host starts with its own default look", c.sidebarModel.symbol(hostItem.key, standard: hostItem.standardIcon) == "terminal" && c.sidebarModel.ownColour(hostItem.key) == nil)
         c.showAppearanceForm(hostItem)
+        check("F01-H21 the sheet says it's from ~/.ssh/config and can't be renamed there", c.appearanceFormModel?.nameEditable == false && c.appearanceFormModel?.showsConnection == true && c.appearanceFormModel?.title == "Edit SSH Config Host")
         c.appearanceFormModel?.icon = "flask"
         c.appearanceFormModel?.colour = .purple
         c.appearanceFormModel?.onSave()

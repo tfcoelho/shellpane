@@ -178,36 +178,21 @@ struct ServerFormView: View {
             .scrollDisabled(false)
             footer
         }
-        .frame(width: Tokens.Size.sheetWidth + 60)
-        .frame(minHeight: 640)
+        .frame(width: Tokens.Size.editSheetWidth)
+        .frame(minHeight: Tokens.Size.editSheetHeight)
     }
 
     /// The server as the sidebar will show it, updating as you type and pick.
     private var header: some View {
-        HStack(spacing: Tokens.Space.s16) {
-            ServerBadge(icon: model.icon, colour: model.colour, size: 44)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.isEdit ? "Edit Server" : "Connect to a Server")
-                    .font(.title3.weight(.semibold))
-                Text(model.previewName)
-                    .foregroundStyle(Tokens.Colors.textMuted)
-                    .lineLimit(1)
-            }
-            Spacer()
-        }
-        .padding([.horizontal, .top], Tokens.Space.s24)
-        .padding(.bottom, Tokens.Space.s4)
+        EditSheetHeader(icon: model.icon, colour: model.colour, title: model.isEdit ? "Edit Server" : "Connect to a Server",
+                        name: model.previewName)
     }
 
     private var appearanceSection: some View {
-        Section {
-            AppearancePicker(colour: $model.colour, icon: $model.icon, icons: ServerIcons.all)
-        } header: {
-            Text("Appearance")
-        } footer: {
-            Text("How it looks in the sidebar and on the path bar's server bar.")
-                .font(.callout)
-                .foregroundStyle(Tokens.Colors.textMuted)
+        AppearanceSection(colour: $model.colour, icon: $model.icon, icons: ServerIcons.all,
+                          footer: "How it looks in the sidebar and on the path bar.") {
+            model.colour = .blue
+            model.icon = ServerIcons.standard
         }
     }
 
@@ -231,7 +216,7 @@ struct ServerFormView: View {
             } else {
                 LabeledContent("Resolves to") {
                     if let r = model.resolved {
-                        Text(verbatim: "\(r.user)@\(r.hostname):\(r.port)" + (r.proxyJump.map { " via \($0)" } ?? ""))
+                        Text(verbatim: r.summary)
                             .font(.callout.monospaced())
                             .foregroundStyle(Tokens.Colors.textMuted)
                             .textSelection(.enabled)
@@ -312,18 +297,12 @@ struct ServerFormView: View {
     }
 
     private var footer: some View {
-        HStack {
+        EditSheetButtons(saveTitle: model.isEdit ? "Save" : "Connect", onCancel: model.onCancel, onSave: model.submit) {
             if case let .edit(f) = model.mode {
                 Button("Delete…", role: .destructive) { model.onDelete(f) }
             } else {
                 Toggle("Save as favorite", isOn: $model.saveAsFavorite)
             }
-            Spacer()
-            Button("Cancel") { model.onCancel() }
-                .keyboardShortcut(.cancelAction)
-            Button(model.isEdit ? "Save" : "Connect") { model.submit() }
-                .keyboardShortcut(.defaultAction)
         }
-        .padding(Tokens.Space.s16)
     }
 }

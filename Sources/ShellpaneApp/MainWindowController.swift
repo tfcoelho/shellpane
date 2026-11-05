@@ -117,30 +117,18 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         }
         sidebarModel.onAddServer = { [weak self] in self?.showConnectPrompt() }
         sidebarModel.onOpenSynclet = { [weak self] s in self?.openSynclet(s) }
-        sidebarModel.onRecolourFavorite = { [weak self] fav, colour in
-            var changed = fav
-            changed.colour = colour.rawValue
-            try? ConnectionManager.shared.favorites.save(changed)
-            self?.sidebarModel.reloadFavorites()
-            self?.panes.forEach { $0.refreshChrome() }
-        }
         sidebarModel.onMoveFavorite = { [weak self] fav, group in
             try? ConnectionManager.shared.groups.move(favorite: fav.id, to: group)
             self?.sidebarModel.reloadFavorites()
         }
         sidebarModel.onNewGroup = { [weak self] fav in
-            self?.askGroupName(title: "New Group", initial: "") { name in
+            self?.askNewGroupName { name in
                 guard let g = try? ConnectionManager.shared.groups.create(name) else { return }
                 if let fav { try? ConnectionManager.shared.groups.move(favorite: fav.id, to: g.id) }
                 self?.sidebarModel.reloadFavorites()
             }
         }
-        sidebarModel.onRenameGroup = { [weak self] g in
-            self?.askGroupName(title: "Rename Group", initial: g.name) { name in
-                try? ConnectionManager.shared.groups.rename(g.id, to: name)
-                self?.sidebarModel.reloadFavorites()
-            }
-        }
+        sidebarModel.onEditGroup = { [weak self] g in self?.showGroupForm(g) }
         sidebarModel.onDeleteGroup = { [weak self] g in
             try? ConnectionManager.shared.groups.delete(g.id)  // its servers stay, ungrouped
             try? ConnectionManager.shared.appearances.remove(AppearanceKey.group(g.id))
@@ -165,6 +153,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         sidebarModel.reloadAppearances()
         sidebarModel.onEditAppearance = { [weak self] item in self?.showAppearanceForm(item) }
         sidebarModel.onEditBookmark = { [weak self] b in self?.showBookmarkForm(b) }
+        sidebarModel.onEditSynclet = { [weak self] s in self?.showSyncletForm(s) }
         sidebarModel.onDeleteBookmark = { [weak self] b in
             try? ConnectionManager.shared.bookmarks.delete(b.id)   // only the shortcut: the folder itself is untouched
             self?.bookmarksChanged()
@@ -355,32 +344,85 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         pane(active, setBookmarked: !pane(active, isBookmarked: active.location.path), path: active.location.path)
     }
 
-    /// The sheet that edits a favorite folder's name, icon and colour.
+    /// What a favorite folder looks like with nothing chosen, where it is now.
+    private func folderLook(at place: Bookmark.Place) -> AppearanceFormModel.Look {
+        AppearanceFormModel.Look(standardIcon: FolderIcons.standard(for: place), automaticColour: sidebarModel.automaticColour(at: place),
+                                 automaticHelp: place == .local ? "Automatic: no colour" : "Automatic: its server's colour")
+    }
+
+    /// Where a favorite folder can be. Always includes where it is now, which may be a host typed once.
+    private func placeChoices(including place: Bookmark.Place) -> AppearanceFormModel.PlaceChoices {
+        var hosts = sidebarModel.unsavedHosts
+        if case let .sshAlias(alias) = place, !hosts.contains(alias) { hosts.insert(alias, at: 0) }
+        return .init(servers: sidebarModel.favorites.map { .init(place: .favorite($0.id), title: $0.name) },
+                     hosts: hosts.map { .init(place: .sshAlias($0), title: $0) })
+    }
+
+    /// Edit… on a favorite folder.
     func showBookmarkForm(_ b: Bookmark) {
-        let model = AppearanceFormModel(title: "Edit Favorite Folder", subtitle: b.path, name: b.name, icon: b.icon, colour: b.colour,
-                                        standardIcon: FolderIcons.standard(for: b.place), icons: FolderIcons.all,
-                                        automaticColour: sidebarModel.automaticColour(b),
-                                        automaticHelp: b.place == .local ? "Automatic: no colour" : "Automatic: its server's colour",
-                                        footer: "How it looks in the sidebar and on the start page.")
-        present(model) { [weak model] in
-            guard let model else { return }
-            try ConnectionManager.shared.bookmarks.update(b.id, name: model.name, icon: model.storedIcon, colour: model.storedColour)
+        let look = folderLook(at: b.place)
+        let model = AppearanceFormModel(kind: "Favorite Folder", name: b.name, nameEditable: true, icon: b.icon, colour: b.colour,
+                                        look: look, icons: FolderIcons.all, footer: "How it looks in the sidebar and on the start page.",
+                                        paths: [.init(label: "Path", value: b.path, isLocal: b.place == .local)],
+                                        place: b.place, placeChoices: placeChoices(including: b.place),
+                                        lookAt: { [weak self] place in self?.folderLook(at: place) ?? look })
+        present(model, deleteTitle: "Remove", delete: { [weak self] in self?.sidebarModel.onDeleteBookmark(b) }) { [weak model] in
+            guard let model, let place = model.place else { return }
+            try ConnectionManager.shared.bookmarks.update(b.id, name: model.name, place: place, path: model.cleanedPath(0),
+                                                          icon: model.storedIcon, colour: model.storedColour)
         }
     }
 
-    /// The same sheet for anything else in the sidebar: just its look.
+    /// Edit… on a group of servers.
+    func showGroupForm(_ g: FavoriteGroup) {
+        let item = sidebarModel.groupItem(g)
+        let model = appearanceModel(item, nameEditable: true)
+        present(model, deleteTitle: "Delete", delete: { [weak self] in self?.sidebarModel.onDeleteGroup(g) }) { [weak self, weak model] in
+            guard let self, let model else { return }
+            try ConnectionManager.shared.groups.rename(g.id, to: model.name)
+            try ConnectionManager.shared.appearances.set(item.key, Appearance(icon: model.storedIcon, colour: model.storedColour))
+            self.sidebarModel.reloadFavorites()
+        }
+    }
+
+    /// Edit… on a saved sync. Each side's server is shown; its folders can be changed.
+    func showSyncletForm(_ s: Synclet) {
+        func side(_ label: String, _ id: String?, _ path: String) -> AppearanceFormModel.PathField {
+            let on = id.map { id in sidebarModel.favorites.first { $0.id == id }?.name ?? "server" } ?? "This Mac"
+            return .init(label: "\(label) (\(on))", value: path, isLocal: id == nil)
+        }
+        let item = sidebarModel.syncletItem(s)
+        let model = appearanceModel(item, nameEditable: true,
+                                    paths: [side("Left", s.leftFavoriteID, s.leftPath), side("Right", s.rightFavoriteID, s.rightPath)])
+        present(model, deleteTitle: "Delete", delete: { [weak self] in self?.sidebarModel.onDeleteSynclet(s) }) { [weak self, weak model] in
+            guard let self, let model else { return }
+            var edited = s
+            edited.name = model.name.trimmingCharacters(in: .whitespaces)
+            edited.leftPath = model.cleanedPath(0)
+            edited.rightPath = model.cleanedPath(1)
+            try ConnectionManager.shared.synclets.save(edited)
+            try ConnectionManager.shared.appearances.set(item.key, Appearance(icon: model.storedIcon, colour: model.storedColour))
+            self.sidebarModel.reloadSynclets()
+        }
+    }
+
+    /// Edit… on what Shellpane doesn't own, a config host, a Mac Favorite, a tag: only how it looks here can change.
     func showAppearanceForm(_ item: AppearanceItem) {
-        let saved = sidebarModel.appearances[item.key]
-        let model = AppearanceFormModel(title: "Edit Appearance", subtitle: item.subtitle.isEmpty ? item.title : "\(item.title): \(item.subtitle)",
-                                        icon: saved?.icon, colour: saved?.colour, standardIcon: item.standardIcon, icons: item.icons,
-                                        automaticHelp: item.automaticHelp, footer: item.footer)
+        let model = appearanceModel(item)
         present(model) { [weak model] in
             guard let model else { return }
             try ConnectionManager.shared.appearances.set(item.key, Appearance(icon: model.storedIcon, colour: model.storedColour))
         }
     }
 
-    private func present(_ model: AppearanceFormModel, save: @escaping () throws -> Void) {
+    private func appearanceModel(_ item: AppearanceItem, nameEditable: Bool = false, paths: [AppearanceFormModel.PathField] = []) -> AppearanceFormModel {
+        let saved = sidebarModel.appearances[item.key]
+        return AppearanceFormModel(kind: item.kind, name: item.title, nameEditable: nameEditable, icon: saved?.icon, colour: saved?.colour,
+                                   look: .init(standardIcon: item.standardIcon, automaticColour: .none, automaticHelp: item.automaticHelp),
+                                   icons: item.icons, footer: item.footer, details: item.details, paths: paths, place: item.connection)
+    }
+
+    private func present(_ model: AppearanceFormModel, deleteTitle: String? = nil, delete: (() -> Void)? = nil, save: @escaping () throws -> Void) {
         guard let window, appearanceSheet == nil else { return }
         appearanceFormModel = model
         let sheet = NSWindow(contentViewController: NSHostingController(rootView: AppearanceFormView(model: model)))
@@ -391,6 +433,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
             self?.appearanceFormModel = nil
         }
         model.onCancel = close
+        model.deleteTitle = deleteTitle
+        model.onDelete = {
+            close()
+            delete?()
+        }
         model.onSave = { [weak self] in
             guard let self else { return }
             do {
@@ -462,16 +509,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PaneDel
         window.beginSheet(sheet)
     }
 
-    private func askGroupName(title: String, initial: String, done: @escaping (String) -> Void) {
+    private func askNewGroupName(done: @escaping (String) -> Void) {
         guard let window else { return }
         let alert = NSAlert()
-        alert.messageText = title
+        alert.messageText = "New Group"
         alert.informativeText = "Groups keep the sidebar tidy. Deleting a group keeps its servers."
-        let field = NSTextField(string: initial)
+        let field = NSTextField(string: "")
         field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
         field.placeholderString = "Clients"
         alert.accessoryView = field
-        alert.addButton(withTitle: initial.isEmpty ? "Create" : "Rename")
+        alert.addButton(withTitle: "Create")
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
         alert.beginSheetModal(for: window) { response in

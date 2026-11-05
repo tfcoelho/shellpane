@@ -32,10 +32,9 @@ final class SidebarModel: ObservableObject {
     var onOpenPlace: (Place) -> Void = { _ in }
     var onAddServer: () -> Void = {}
     var onNewGroup: (Favorite?) -> Void = { _ in }
-    var onRenameGroup: (FavoriteGroup) -> Void = { _ in }
+    var onEditGroup: (FavoriteGroup) -> Void = { _ in }
     var onDeleteGroup: (FavoriteGroup) -> Void = { _ in }
     var onMoveFavorite: (Favorite, String?) -> Void = { _, _ in }
-    var onRecolourFavorite: (Favorite, ConnectionColour) -> Void = { _, _ in }
 
     var ungrouped: [Favorite] {
         let ids = Set(groups.map(\.id))
@@ -50,6 +49,7 @@ final class SidebarModel: ObservableObject {
     /// Chosen looks for what isn't a saved server or a favorite folder, by `AppearanceKey`.
     @Published var appearances: [String: Appearance] = [:]
     var onEditAppearance: (AppearanceItem) -> Void = { _ in }
+    var onEditSynclet: (Synclet) -> Void = { _ in }
 
     func reloadAppearances() {
         appearances = (try? ConnectionManager.shared.appearances.all()) ?? [:]
@@ -67,30 +67,34 @@ final class SidebarModel: ObservableObject {
     }
 
     func hostItem(_ host: String) -> AppearanceItem {
-        AppearanceItem(key: AppearanceKey.host(host), title: host, subtitle: "From ~/.ssh/config", standardIcon: "terminal",
+        AppearanceItem(key: AppearanceKey.host(host), kind: "SSH Config Host", title: host, standardIcon: "terminal",
                        icons: AppearanceItem.icons(ServerIcons.all, with: "terminal"),
-                       footer: "How it looks in the sidebar and on the path bar. Your ~/.ssh/config isn't changed.")
+                       footer: "How it looks in the sidebar and on the path bar. Your ~/.ssh/config isn't changed.",
+                       details: [.init(label: "Defined in", value: "~/.ssh/config")], connection: .sshAlias(host))
     }
 
     func placeItem(_ place: Place) -> AppearanceItem {
-        AppearanceItem(key: AppearanceKey.place(place.path), title: place.title, subtitle: place.path, standardIcon: place.symbol,
+        AppearanceItem(key: AppearanceKey.place(place.path), kind: "Mac Favorite", title: place.title, standardIcon: place.symbol,
                        icons: AppearanceItem.icons(FolderIcons.all, with: place.symbol),
-                       footer: "How it looks in Shellpane. Finder's own sidebar isn't changed.")
+                       footer: "How it looks in Shellpane. Finder's own sidebar isn't changed.",
+                       details: [.init(label: "Path", value: place.path)])
     }
 
     func syncletItem(_ s: Synclet) -> AppearanceItem {
         let standard = "arrow.triangle.2.circlepath"
-        return AppearanceItem(key: AppearanceKey.synclet(s.id), title: s.name, subtitle: "\(s.leftPath) ↔ \(s.rightPath)", standardIcon: standard,
+        return AppearanceItem(key: AppearanceKey.synclet(s.id), kind: "Synclet", title: s.name, standardIcon: standard,
                               icons: AppearanceItem.icons(FolderIcons.all, with: standard))
     }
 
     func groupItem(_ g: FavoriteGroup) -> AppearanceItem {
-        AppearanceItem(key: AppearanceKey.group(g.id), title: g.name, subtitle: "Group of servers", standardIcon: "folder", icons: FolderIcons.all)
+        let count = favorites(in: g).count
+        return AppearanceItem(key: AppearanceKey.group(g.id), kind: "Group", title: g.name, standardIcon: "folder", icons: FolderIcons.all,
+                              details: [.init(label: "Servers", value: "\(count)")])
     }
 
     func tagItem(_ t: FinderTag) -> AppearanceItem {
         let standard = "circle.fill"
-        return AppearanceItem(key: AppearanceKey.tag(t.name), title: t.name, subtitle: "Finder tag", standardIcon: standard,
+        return AppearanceItem(key: AppearanceKey.tag(t.name), kind: "Tag", title: t.name, standardIcon: standard,
                               icons: AppearanceItem.icons(FolderIcons.all, with: standard), automaticHelp: "Automatic: the tag's colour in Finder",
                               footer: "How it looks in Shellpane. The tag itself isn't changed in Finder.")
     }
@@ -106,9 +110,9 @@ final class SidebarModel: ObservableObject {
         return (fav.colour.flatMap(ConnectionColour.init(rawValue:)) ?? .none).color
     }
 
-    /// The colour a favorite folder has with none of its own: its server's, grey on this Mac.
-    func automaticColour(_ b: Bookmark) -> ConnectionColour {
-        guard case let .favorite(id) = b.place, let fav = favorites.first(where: { $0.id == id }) else { return .none }
+    /// The colour a favorite folder here has with none of its own: its server's, grey on this Mac.
+    func automaticColour(at place: Bookmark.Place) -> ConnectionColour {
+        guard case let .favorite(id) = place, let fav = favorites.first(where: { $0.id == id }) else { return .none }
         return fav.colour.flatMap(ConnectionColour.init(rawValue:)) ?? .none
     }
 
@@ -190,11 +194,6 @@ struct SidebarView: View {
         if let colour = model.ownColour(item.key) { symbol.foregroundStyle(colour.color) } else { symbol }
     }
 
-    @ViewBuilder
-    private func appearanceMenu(_ item: AppearanceItem) -> some View {
-        Button("Edit Appearance…") { model.onEditAppearance(item) }
-    }
-
     var body: some View {
         List {
             Section {
@@ -223,9 +222,9 @@ struct SidebarView: View {
                                 .foregroundStyle(model.ownColour(item.key)?.color ?? Tokens.Colors.textMuted)
                         }
                             .contextMenu {
-                                Button("Rename Group…") { model.onRenameGroup(group) }
-                                appearanceMenu(item)
-                                Button("Delete Group", role: .destructive) { model.onDeleteGroup(group) }
+                                Button("Edit…") { model.onEditGroup(group) }
+                                Divider()
+                                Button("Delete", role: .destructive) { model.onDeleteGroup(group) }
                             }
                             .help("Deleting a group keeps its servers")
                     }
@@ -298,7 +297,7 @@ struct SidebarView: View {
                             Button("Connect") { model.onOpenHost(host) }
                             Button("Save as Favorite…") { model.onSaveHost(host) }
                             Divider()
-                            appearanceMenu(item)
+                            Button("Edit…") { model.onEditAppearance(item) }
                         }
                         .accessibilityLabel("\(host), from SSH config, \(model.state(of: key) == .connected ? "connected" : "not connected")")
                     }
@@ -322,7 +321,8 @@ struct SidebarView: View {
                         .help("\(s.leftPath) ↔ \(s.rightPath)")
                         .contextMenu {
                             Button("Open") { model.onOpenSynclet(s) }
-                            appearanceMenu(model.syncletItem(s))
+                            Divider()
+                            Button("Edit…") { model.onEditSynclet(s) }
                             Divider()
                             Button("Delete", role: .destructive) { model.onDeleteSynclet(s) }
                         }
@@ -347,7 +347,7 @@ struct SidebarView: View {
                     .contextMenu {
                         Button("Open") { model.onOpenPlace(place) }
                         Divider()
-                        appearanceMenu(model.placeItem(place))
+                        Button("Edit…") { model.onEditAppearance(model.placeItem(place)) }
                     }
                 }
             }
@@ -375,7 +375,7 @@ struct SidebarView: View {
                         .contextMenu {
                             Button("Open") { model.onOpenTag(tag) }
                             Divider()
-                            appearanceMenu(model.tagItem(tag))
+                            Button("Edit…") { model.onEditAppearance(model.tagItem(tag)) }
                         }
                         .accessibilityLabel("Tag \(tag.name)")
                     }
@@ -406,12 +406,6 @@ struct SidebarView: View {
             if state == .connected { Button("Disconnect") { model.onDisconnect(fav) } }
             Divider()
             Button("Edit…") { model.onEditFavorite(fav) }
-            Menu("Colour") {
-                ForEach(ConnectionColour.allCases.filter { $0 != .none }, id: \.self) { c in
-                    Button(c.rawValue.capitalized) { model.onRecolourFavorite(fav, c) }
-                        .disabled(colour == c)
-                }
-            }
             Menu("Move to Group") {
                 Button("No Group") { model.onMoveFavorite(fav, nil) }.disabled(fav.groupID == nil)
                 if !model.groups.isEmpty { Divider() }
@@ -421,6 +415,7 @@ struct SidebarView: View {
                 Divider()
                 Button("New Group…") { model.onNewGroup(fav) }
             }
+            Divider()
             Button("Delete…", role: .destructive) { model.onDeleteFavorite(fav) }
         }
         .accessibilityLabel("\(fav.name), \(fav.subtitle), \(state == .connected ? "connected" : "not connected")")

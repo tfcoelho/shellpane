@@ -353,6 +353,13 @@ enum Snapshot {
                 controller.showBookmarkForm(b)
             } else if sheet.hasPrefix("host:") {
                 controller.showAppearanceForm(controller.sidebarModel.hostItem(String(sheet.dropFirst(5))))
+            } else if sheet.hasPrefix("group:"), let g = controller.sidebarModel.groups.first(where: { $0.name == String(sheet.dropFirst(6)) }) {
+                controller.showGroupForm(g)
+            } else if sheet.hasPrefix("synclet:"), let s = controller.sidebarModel.synclets.first(where: { $0.name == String(sheet.dropFirst(8)) }) {
+                controller.showSyncletForm(s)
+            } else if sheet.hasPrefix("place:") {
+                let path = String(sheet.dropFirst(6))
+                controller.showAppearanceForm(controller.sidebarModel.placeItem(.init(id: path, title: (path as NSString).lastPathComponent, symbol: "folder", path: path)))
             }
         }
         Task { @MainActor in

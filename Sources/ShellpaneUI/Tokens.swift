@@ -87,6 +87,9 @@ public enum Tokens {
         public static let windowMinWidth: CGFloat = 760
         public static let windowMinHeight: CGFloat = 420
         public static let sheetWidth: CGFloat = 460
+        /// Every edit sheet, whatever it edits.
+        public static let editSheetWidth: CGFloat = sheetWidth + 60
+        public static let editSheetHeight: CGFloat = 640
         public static let connectionDot: CGFloat = 8
         public static let connectionBar: CGFloat = 3
         public static let activePaneMarker: CGFloat = 2
