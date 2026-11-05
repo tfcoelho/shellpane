@@ -16,14 +16,8 @@
 other. If `ssh yourserver` works in Terminal, it works in Shellpane: it runs your Mac's own `/usr/bin/ssh`,
 so your `~/.ssh/config`, keys, agent (1Password, Secretive…), jump hosts and `known_hosts` just work.
 
-<!--
-  VIDEO, in place of the screenshot. On GitHub: open this file with the pencil (Edit), drag
-  video/out/shellpane-readme.mp4 into the editor, and GitHub inserts a line like
-  https://github.com/user-attachments/assets/…  Paste that line here, on its own, replacing this whole
-  comment, and commit. It then plays on the page.
--->
 
-https://github.com/user-attachments/assets/REPLACE-WITH-THE-LINK-GITHUB-GIVES-YOU
+
 
 **[Download for Mac](https://github.com/tfcoelho/shellpane/releases/latest/download/Shellpane.dmg)** ·
 [Website](https://tfcoelho.github.io/shellpane/) · free and open source (MIT) · macOS 14 or later, Apple silicon and Intel
