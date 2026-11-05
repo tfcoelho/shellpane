@@ -4,17 +4,26 @@
 </h1>
 
 <p>
-  <a href="LICENSE"><img alt="License MIT" src="https://img.shields.io/badge/License-MIT-c9a227?style=flat-square"></a>
-  <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-informational?style=flat-square&logo=apple&logoColor=white">
-  <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6.0-F05138?style=flat-square&logo=swift&logoColor=white">
-  <img alt="Apple silicon and Intel" src="https://img.shields.io/badge/Apple%20silicon%20%2B%20Intel-supported-2ea44f?style=flat-square">
+  <a href="https://github.com/tfcoelho/shellpane/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/tfcoelho/shellpane?include_prereleases&style=flat&color=4fd1b4"></a>
+  <a href="LICENSE"><img alt="License MIT" src="https://img.shields.io/badge/License-MIT-c9a227?style=flat"></a>
+  <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-informational?style=flat&logo=apple&logoColor=white">
+  <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6.0-F05138?style=flat&logo=swift&logoColor=white">
+  <img alt="Apple silicon and Intel" src="https://img.shields.io/badge/Apple%20silicon%20%2B%20Intel-supported-2ea44f?style=flat">
+  <img alt="No analytics" src="https://img.shields.io/badge/Analytics-none-8a8a92?style=flat">
 </p>
 
 **The Mac file manager for people who live in SSH.** Up to six panes, your Mac on one side and your servers on the
 other. If `ssh yourserver` works in Terminal, it works in Shellpane: it runs your Mac's own `/usr/bin/ssh`,
 so your `~/.ssh/config`, keys, agent (1Password, Secretive…), jump hosts and `known_hosts` just work.
 
-![Shellpane: a sidebar of servers in their own colours and icons, a local project on the left, a server on the right](site/assets/shot-dark.png)
+<!--
+  VIDEO, in place of the screenshot. On GitHub: open this file with the pencil (Edit), drag
+  video/out/shellpane-readme.mp4 into the editor, and GitHub inserts a line like
+  https://github.com/user-attachments/assets/…  Paste that line here, on its own, replacing this whole
+  comment, and commit. It then plays on the page.
+-->
+
+https://github.com/user-attachments/assets/REPLACE-WITH-THE-LINK-GITHUB-GIVES-YOU
 
 **[Download for Mac](https://github.com/tfcoelho/shellpane/releases/latest/download/Shellpane.dmg)** ·
 [Website](https://tfcoelho.github.io/shellpane/) · free and open source (MIT) · macOS 14 or later, Apple silicon and Intel
