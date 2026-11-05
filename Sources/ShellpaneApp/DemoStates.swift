@@ -33,7 +33,7 @@ enum DemoStates {
             await settle()
         }
         /// A view at 3× its point size, so the video can zoom in without softening.
-        func image(of view: NSView) -> Data? {
+        func picture(of view: NSView) -> NSBitmapImageRep? {
             view.layoutSubtreeIfNeeded()
             view.displayIfNeeded()
             let size = view.bounds.size
@@ -42,16 +42,26 @@ enum DemoStates {
                                              colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
             rep.size = size
             view.cacheDisplay(in: view.bounds, to: rep)
-            return rep.representation(using: .png, properties: [:])
+            return rep
         }
-        /// The window as it is now, and the open sheet with its place on the window (fractions, from the top left).
+        /// The window as it is now, with the destination picker over it (its own window), and the open sheet
+        /// with its place on the window (fractions, from the top left).
         func capture(_ name: String) {
-            if !window.isKeyWindow { NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil) }
+            // The picker holds the keyboard while it's up; taking it back would be choosing nothing.
+            if controller.picker == nil, !window.isKeyWindow { NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil) }
             let base = String(format: "%02d-%@", states.count, name)
             var entry: [String: Any] = ["name": name, "file": base + ".png"]
-            try? image(of: frameView)?.write(to: URL(fileURLWithPath: dir).appendingPathComponent(base + ".png"))
+            if let rep = picture(of: frameView) {
+                if let surface = controller.picker?.surface, let top = picture(of: surface) {
+                    NSGraphicsContext.saveGraphicsState()
+                    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+                    top.draw(in: frameView.bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
+                    NSGraphicsContext.restoreGraphicsState()
+                }
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir).appendingPathComponent(base + ".png"))
+            }
             if let sheet = controller.formSheet, let sheetView = sheet.contentView?.superview {
-                try? image(of: sheetView)?.write(to: URL(fileURLWithPath: dir).appendingPathComponent(base + "-sheet.png"))
+                try? picture(of: sheetView)?.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir).appendingPathComponent(base + "-sheet.png"))
                 let w = window.frame, f = sheet.frame
                 entry["sheet"] = base + "-sheet.png"
                 entry["sheetFrame"] = [(f.minX - w.minX) / w.width, (w.maxY - f.maxY) / w.height, f.width / w.width, f.height / w.height]
@@ -102,48 +112,77 @@ enum DemoStates {
                 await settle(0.2)
                 capture("form-name")
             }
-            // Trying a couple before settling, as people do: each click recolours the preview.
-            for colour in [ConnectionColour.green, .purple, .pink] {
-                form.colour = colour
-                await settle(0.2)
-                capture("form-colour")
-            }
-            for icon in ["globe", "flask", "cart"] {
-                form.icon = icon
-                await settle(0.2)
-                capture("form-icon")
-            }
+            form.colour = .pink
+            await settle(0.2)
+            capture("form-colour")
+            form.icon = "cart"
+            await settle(0.2)
+            capture("form-icon")
             if let clients { form.groupID = clients.id }
             form.initialPath = shopRoot   // so it opens on the shop's folder, not the account's home
-            await settle(0.2)
-            capture("form-group")
             form.submit()
             await waitFor { controller.formSheet == nil && controller.right.location.session?.target.host == "shop.example.com"
                 && !controller.right.entries.isEmpty }
             capture("added")
 
-            // 3. A Finder tag: everything tagged "Client" in the left pane, then F5 to the client's server.
-            controller.paneDidBecomeActive(controller.left)
-            controller.left.showTag(FinderTag(name: "Client", colour: 6))
-            await waitFor { controller.left.entries.count >= 2 }
-            capture("tag")
-            window.makeFirstResponder(controller.left.tableView)
-            controller.left.tableView.selectRowIndexes(IndexSet(controller.left.entries.indices), byExtendingSelection: false)
-            await settle(0.2)
-            capture("tag-selected")
-            let names = controller.left.entries.map(\.name)
-            controller.transferToOtherPane(.copy)
-            controller.hideActivity()
-            await waitFor { Set(names).isSubset(of: Set(controller.right.entries.map(\.name))) }
-            capture("copied")
-
-            // 4. A favourite folder opens on its server.
-            controller.paneDidBecomeActive(controller.right)
-            if let assets = controller.sidebarModel.bookmarks.first(where: { $0.name == "assets" }) {
-                controller.openBookmark(assets)
-                await waitFor { controller.right.location.path.hasSuffix("/assets") && !controller.right.entries.isEmpty }
-                capture("bookmark")
+            // 3. A third pane beside the others, showing the start page, then Production opened in it.
+            let mac = controller.left, shop = controller.right
+            guard let third = controller.split(.right, of: shop) else { print("couldn't split"); exit(1) }
+            await settle(0.5)
+            // Evenly, as you'd drag the dividers: a new pane takes half of the one it splits.
+            if let row = controller.area.rootSplit {
+                row.moveDivider(0, to: row.bounds.width / 3)
+                row.moveDivider(1, to: row.bounds.width * 2 / 3)
             }
+            await settle()
+            capture("split")
+            controller.connect(production, path: serverRoot)
+            await waitFor { third.location.session != nil && !third.entries.isEmpty && !third.showsStart }
+            capture("third")
+
+            // 4. Dragged by its path bar to the bottom edge: the preview, then two on top with one below.
+            let area = controller.area.visibleBounds
+            controller.beginDrag(third, tab: nil)
+            controller.updateDrag(at: NSPoint(x: area.midX, y: area.minY + 6))
+            await settle(0.4)
+            capture("drag")
+            controller.endDrag()
+            await settle(0.5)
+            if let column = controller.area.rootSplit, let row = column.items.first as? PaneSplit {
+                row.moveDivider(0, to: row.bounds.width / 2)
+            }
+            await settle()
+            capture("landed")
+
+            // 5. Files from the Mac: Transfer dims the app and lights the two panes that can take them.
+            guard let row = mac.entries.firstIndex(where: { $0.name == "release-notes.html" }) else { print("no file to send"); exit(1) }
+            controller.paneDidBecomeActive(mac)
+            window.makeFirstResponder(mac.tableView)
+            mac.tableView.selectRowIndexes([row], byExtendingSelection: false)
+            mac.tableView.scrollRowToVisible(row)
+            await settle()
+            capture("selected")
+            NSApp.activate(ignoringOtherApps: true)
+            controller.transferClicked(nil)
+            await settle(0.5)
+            capture("picker")
+            guard let picker = controller.picker else { print("the picker didn't open"); exit(1) }
+            picker.highlight(1)
+            await settle(0.3)
+            capture("picker-hover")
+            picker.choose(at: 1)
+            await settle(0.1)
+            controller.hideActivity()
+            await waitFor { third.entries.contains { $0.name == "release-notes.html" } }
+            if let arrived = third.entries.firstIndex(where: { $0.name == "release-notes.html" }) {
+                // In the active pane's colour, so it's easy to spot where the file landed.
+                controller.paneDidBecomeActive(third)
+                window.makeFirstResponder(third.tableView)
+                third.tableView.selectRowIndexes([arrived], byExtendingSelection: false)
+                third.tableView.scrollRowToVisible(arrived)
+            }
+            await settle(0.5)
+            capture("sent")
 
             let json = try? JSONSerialization.data(withJSONObject: ["states": states], options: [.prettyPrinted, .sortedKeys])
             try? json?.write(to: URL(fileURLWithPath: dir).appendingPathComponent("states.json"))

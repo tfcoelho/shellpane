@@ -14,3 +14,7 @@ video/public/states/
 
 # Editor settings
 .vscode/
+
+# Generated reports and research notes
+reports/
+research_notes/

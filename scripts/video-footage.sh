@@ -1,6 +1,6 @@
 #!/bin/sh
 # Captures the real app for the Remotion video (video/): every step of the story (the organised sidebar,
-# adding a server, a Finder tag, a favourite folder) as a 3× image, with video/public/states/states.json
+# adding a server, arranging panes, sending files to one) as a 3× image, with video/public/states/states.json
 # listing them in order. The video animates between them at 60 fps.
 # Neutral sidebar and a stand-in user name, so nothing of your own Mac appears in a public video.
 set -eu

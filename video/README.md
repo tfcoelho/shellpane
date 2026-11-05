@@ -2,7 +2,7 @@
 
 Rendered with [Remotion](https://www.remotion.dev) at 60 fps from the real app. Nothing in the window is mocked:
 `scripts/video-footage.sh` plays the story in Shellpane against a throwaway server (the organised sidebar,
-adding a server, a Finder tag, a favourite folder) and saves the window after every step at 3×
+adding a server, arranging panes, sending a file to one) and saves the window after every step at 3×
 (`public/states/`), plus the form sheet and where it sits. Shellpane's own changes are instant, so all the motion (camera,
 transitions, motion blur) comes from Remotion between those real states: smoother and sharper than filming
 the screen, and no Screen Recording permission.
@@ -22,9 +22,11 @@ use by a larger company. The font is Inter (SIL Open Font License), loaded from 
 
 ## What it says
 
-One message: **all your servers, organised your way, and adding one takes seconds.** The cut shows the
-organised sidebar, then adding a server with a colour and an icon, then where it went. Other features
-(F5, filter, tags, favourite folders) belong on the website; in a 25-second video they dilute the point.
+Two messages, no more: **all your servers, organised your way, and adding one takes seconds; then lay them out
+in up to six panes and send files to any of them.** The cut shows the organised sidebar, adding a server with a
+colour and an icon, where it went, then a third pane dragged into place and a file sent to it. Other features
+(the start page, Edit, tags, favourite folders, filter) belong on the website; in a video under 30 seconds they
+dilute the point.
 
 ## How the camera behaves (`src/camera.js`)
 
@@ -55,7 +57,7 @@ registered on its own under "Scenes" so it can be previewed and timed alone, joi
 - `src/components/Motion.jsx`: motion blur on camera moves (`MOTION_BLUR` in `src/theme.js` turns it off)
 - `src/components/Cursor.jsx`: the pointer that glides and clicks, in window coordinates
 - `src/places.js`: where things are in the captured window (pointer and camera targets)
-- `src/scenes/`: Logo, Headline, TheApp (one continuous shot: sidebar, adding a server, where it went), Yours, End
+- `src/scenes/`: Logo, Headline, TheApp (one continuous shot: sidebar, adding a server, where it went, panes, a transfer), Yours, End
 
 Recording mode keeps your Mac out of it: a neutral sidebar (`SHELLPANE_DEMO_SIDEBAR`), a stand-in user name
 (`SHELLPANE_DISPLAY_USER`), demo Finder tags on demo files (`SHELLPANE_DEMO_TAGS`, found by walking
