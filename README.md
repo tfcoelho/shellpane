@@ -1,7 +1,3 @@
-
-
-https://github.com/user-attachments/assets/4cb41c96-9a17-4086-a9b0-be57bc51edff
-
 <h1>
   <img src="Resources/AppIcon-1024.png" alt="Shellpane logo" height="56" align="absmiddle">
   Shellpane
@@ -20,11 +16,7 @@ https://github.com/user-attachments/assets/4cb41c96-9a17-4086-a9b0-be57bc51edff
 other. If `ssh yourserver` works in Terminal, it works in Shellpane: it runs your Mac's own `/usr/bin/ssh`,
 so your `~/.ssh/config`, keys, agent (1Password, Secretive…), jump hosts and `known_hosts` just work.
 
-
-
-https://github.com/user-attachments/assets/239c32dd-478a-49ed-9810-9eb8e04d08da
-
-
+https://github.com/user-attachments/assets/ffaac46b-b1fd-42e7-ad3a-ff965989ada8
 
 **[Download for Mac](https://github.com/tfcoelho/shellpane/releases/latest/download/Shellpane.dmg)** ·
 [Website](https://tfcoelho.github.io/shellpane/) · free and open source (MIT) · macOS 14 or later, Apple silicon and Intel
